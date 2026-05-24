@@ -1,14 +1,36 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState } from "react";
 import { LandingHero } from "@/components/LandingHero";
 import { LocationSearch } from "@/components/LocationSearch";
-import { SelectionSummary } from "@/components/SelectionSummary";
 import type { SelectedLocation } from "@/lib/types/location";
+
+const ExploreMap = dynamic(
+  () =>
+    import("@/components/ExploreMap").then((module) => module.ExploreMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-100">
+        <p className="text-sm text-zinc-600">Loading map…</p>
+      </div>
+    ),
+  },
+);
 
 export function HomePage() {
   const [selectedLocation, setSelectedLocation] =
     useState<SelectedLocation | null>(null);
+
+  if (selectedLocation) {
+    return (
+      <ExploreMap
+        location={selectedLocation}
+        onSearchAgain={() => setSelectedLocation(null)}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-full flex-col bg-stone-50">
@@ -16,19 +38,12 @@ export function HomePage() {
         <LandingHero />
 
         <div className="mt-10 w-full">
-          {!selectedLocation ? (
-            <LocationSearch onSelect={setSelectedLocation} />
-          ) : (
-            <SelectionSummary
-              location={selectedLocation}
-              onSearchAgain={() => setSelectedLocation(null)}
-            />
-          )}
+          <LocationSearch onSelect={setSelectedLocation} />
         </div>
       </main>
 
       <footer className="pb-8 text-center text-sm text-zinc-500">
-        Powered by Mapbox Search
+        Powered by Mapbox
       </footer>
     </div>
   );

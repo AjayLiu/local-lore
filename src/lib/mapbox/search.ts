@@ -1,3 +1,4 @@
+import { getMapboxAccessToken } from "./access-token";
 import { MIN_QUERY_LENGTH, SEARCH_BOX_BASE } from "./constants";
 import type { SelectedLocation } from "@/lib/types/location";
 
@@ -32,16 +33,6 @@ export function createSessionToken(): string {
   return crypto.randomUUID();
 }
 
-function getAccessToken(): string {
-  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-  if (!token) {
-    throw new Error(
-      "Mapbox access token is missing. Set NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN in your environment.",
-    );
-  }
-  return token;
-}
-
 export async function fetchSuggestions(
   query: string,
   sessionToken: string,
@@ -50,7 +41,7 @@ export async function fetchSuggestions(
     return [];
   }
 
-  const accessToken = getAccessToken();
+  const accessToken = getMapboxAccessToken();
   const params = new URLSearchParams({
     q: query.trim(),
     session_token: sessionToken,
@@ -78,7 +69,7 @@ export async function retrieveLocation(
   mapboxId: string,
   sessionToken: string,
 ): Promise<SelectedLocation> {
-  const accessToken = getAccessToken();
+  const accessToken = getMapboxAccessToken();
   const params = new URLSearchParams({
     session_token: sessionToken,
     access_token: accessToken,

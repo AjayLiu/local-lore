@@ -4,7 +4,7 @@ Turn geographical searches into historical and cultural discoveries.
 
 ## Milestone 1
 
-Landing page with debounced Mapbox Search Box autocomplete. Selecting a location captures coordinates and shows a confirmation summary.
+Landing page with debounced Mapbox Search Box autocomplete. Selecting a location opens a full-screen Mapbox GL map centered on that place, with pan and zoom.
 
 ## Prerequisites
 
@@ -73,7 +73,6 @@ src/
 
 ## What's next
 
-- Full-screen Mapbox GL map on location select (PRD Milestone 1 completion)
 - Supabase PostGIS cache (Milestone 2)
 - Vercel AI SDK lore agent (Milestone 3)
 - Interactive pins and lore cards (Milestone 4)
