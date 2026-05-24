@@ -3,13 +3,13 @@
 type LoreResultsPanelProps = {
   pinCount: number;
   isLoading: boolean;
-  error: Error | undefined;
+  errorMessage: string | null;
   onRetry: () => void;
 };
 
-function formatLoreError(error: Error): string {
+function formatLoreError(message: string): string {
   try {
-    const parsed = JSON.parse(error.message) as { error?: string };
+    const parsed = JSON.parse(message) as { error?: string };
     if (parsed.error) {
       return parsed.error;
     }
@@ -17,20 +17,33 @@ function formatLoreError(error: Error): string {
     // use raw message
   }
 
-  return error.message;
+  if (
+    message.toLowerCase().includes("quota") ||
+    message.includes("429") ||
+    message.includes("RESOURCE_EXHAUSTED")
+  ) {
+    return (
+      "Gemini API quota exceeded. Each search uses one AI request. " +
+      "Wait and try again, or set LORE_MODEL_ID=gemini-2.5-flash in .env.local."
+    );
+  }
+
+  return message;
 }
 
 export function LoreResultsPanel({
   pinCount,
   isLoading,
-  error,
+  errorMessage,
   onRetry,
 }: LoreResultsPanelProps) {
-  if (error) {
+  if (errorMessage) {
     return (
       <div className="pointer-events-auto w-full max-w-lg rounded-xl bg-white/95 px-5 py-4 shadow-lg backdrop-blur-sm">
         <p className="text-sm font-medium text-red-700">Could not load lore</p>
-        <p className="mt-1 text-sm text-zinc-600">{formatLoreError(error)}</p>
+        <p className="mt-1 text-sm text-zinc-600">
+          {formatLoreError(errorMessage)}
+        </p>
         <button
           type="button"
           onClick={onRetry}
@@ -54,7 +67,7 @@ export function LoreResultsPanel({
       <p className="mt-1 text-sm text-zinc-600">
         {pinCount > 0
           ? `Placing ${pinCount} ${pinCount === 1 ? "story" : "stories"} on the map…`
-          : "Searching Wikipedia and synthesizing stories nearby."}
+          : "Queued for Wikipedia lookup and AI synthesis. This may take a moment when the queue is busy."}
       </p>
     </div>
   );

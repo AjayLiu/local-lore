@@ -1,21 +1,22 @@
 "use client";
 
-import { experimental_useObject as useObject } from "@ai-sdk/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { LoreResultsPanel } from "@/components/LoreResultsPanel";
 import { getMapboxAccessToken } from "@/lib/mapbox/access-token";
 import { DEFAULT_MAP_ZOOM } from "@/lib/mapbox/constants";
 import { buildLorePopupHtml, createLorePinElement } from "@/lib/mapbox/lore-pin";
-import { normalizeLoreItems } from "@/lib/lore/normalize-items";
 import {
   getLoreHeadline,
   getLoreItemKey,
   isPlottableLoreItem,
 } from "@/lib/lore/plottable-items";
-import { loreStreamSchema } from "@/lib/lore/schema";
+import type { LoreItem } from "@/lib/lore/schema";
+import { loreJobResponseSchema } from "@/lib/jobs/types";
 import type { SelectedLocation } from "@/lib/types/location";
+
+const POLL_INTERVAL_MS = 2000;
 
 type ExploreMapProps = {
   location: SelectedLocation;
@@ -26,25 +27,134 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const centerMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const centerMarkerElementRef = useRef<HTMLDivElement | null>(null);
   const loreMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const hasFitBoundsRef = useRef(false);
   const submittedForId = useRef<string | null>(null);
+  const pollAbortRef = useRef<AbortController | null>(null);
 
-  const { object, submit, isLoading, error, stop } = useObject({
-    api: "/api/lore",
-    schema: loreStreamSchema,
-  });
+  const [loreItems, setLoreItems] = useState<LoreItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const loreItems = normalizeLoreItems(object);
   const plottableItems = loreItems.filter(isPlottableLoreItem);
 
-  const requestLore = useCallback(() => {
-    submit({
-      latitude: location.latitude,
-      longitude: location.longitude,
-      label: location.label,
-    });
-  }, [location.latitude, location.longitude, location.label, submit]);
+  const requestLore = useCallback(async () => {
+    pollAbortRef.current?.abort();
+    pollAbortRef.current = null;
+
+    setIsLoading(true);
+    setError(null);
+    setLoreItems([]);
+    hasFitBoundsRef.current = false;
+
+    try {
+      const response = await fetch("/api/lore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          latitude: location.latitude,
+          longitude: location.longitude,
+          label: location.label,
+        }),
+      });
+
+      const data: unknown = await response.json();
+      if (!response.ok) {
+        const message =
+          typeof data === "object" &&
+          data !== null &&
+          "error" in data &&
+          typeof (data as { error: unknown }).error === "string"
+            ? (data as { error: string }).error
+            : "Failed to start lore discovery";
+        throw new Error(message);
+      }
+
+      const jobId =
+        typeof data === "object" &&
+        data !== null &&
+        "jobId" in data &&
+        typeof (data as { jobId: unknown }).jobId === "string"
+          ? (data as { jobId: string }).jobId
+          : null;
+
+      if (!jobId) {
+        throw new Error("Invalid response from lore API");
+      }
+
+      const abort = new AbortController();
+      pollAbortRef.current = abort;
+
+      const poll = async () => {
+        while (!abort.signal.aborted) {
+          const statusResponse = await fetch(
+            `/api/lore?jobId=${encodeURIComponent(jobId)}`,
+            { signal: abort.signal },
+          );
+
+          const statusData: unknown = await statusResponse.json();
+          if (!statusResponse.ok) {
+            const message =
+              typeof statusData === "object" &&
+              statusData !== null &&
+              "error" in statusData &&
+              typeof (statusData as { error: unknown }).error === "string"
+                ? (statusData as { error: string }).error
+                : "Failed to check lore job status";
+            throw new Error(message);
+          }
+
+          const parsed = loreJobResponseSchema.safeParse(statusData);
+          if (!parsed.success) {
+            throw new Error("Invalid lore job status response");
+          }
+
+          const job = parsed.data;
+          if (job.status === "complete") {
+            setLoreItems(job.items ?? []);
+            setIsLoading(false);
+            return;
+          }
+
+          if (job.status === "failed") {
+            throw new Error(job.error ?? "Lore discovery failed");
+          }
+
+          await new Promise((resolve) => {
+            const timeout = setTimeout(resolve, POLL_INTERVAL_MS);
+            abort.signal.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timeout);
+                resolve(undefined);
+              },
+              { once: true },
+            );
+          });
+        }
+      };
+
+      void poll().catch((pollError) => {
+        if (abort.signal.aborted) {
+          return;
+        }
+        setError(
+          pollError instanceof Error
+            ? pollError.message
+            : "Lore discovery failed",
+        );
+        setIsLoading(false);
+      });
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to start lore discovery",
+      );
+      setIsLoading(false);
+    }
+  }, [location.latitude, location.longitude, location.label]);
 
   useEffect(() => {
     if (submittedForId.current === location.id) {
@@ -52,10 +162,12 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
     }
 
     submittedForId.current = location.id;
-    hasFitBoundsRef.current = false;
-    stop();
-    requestLore();
-  }, [location.id, requestLore, stop]);
+    void requestLore();
+
+    return () => {
+      pollAbortRef.current?.abort();
+    };
+  }, [location.id, requestLore]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -75,21 +187,36 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
     mapRef.current = map;
 
-    centerMarkerRef.current = new mapboxgl.Marker({ color: "#78716c" })
+    const centerElement = document.createElement("div");
+    centerElement.className = "lore-center-marker";
+    centerMarkerElementRef.current = centerElement;
+
+    centerMarkerRef.current = new mapboxgl.Marker({ element: centerElement })
       .setLngLat([location.longitude, location.latitude])
       .addTo(map);
 
     return () => {
-      for (const marker of loreMarkersRef.current.values()) {
+      const loreMarkers = loreMarkersRef.current;
+      for (const marker of loreMarkers.values()) {
         marker.remove();
       }
-      loreMarkersRef.current.clear();
+      loreMarkers.clear();
       centerMarkerRef.current?.remove();
       centerMarkerRef.current = null;
+      centerMarkerElementRef.current = null;
       map.remove();
       mapRef.current = null;
     };
   }, [location.id, location.latitude, location.longitude]);
+
+  useEffect(() => {
+    const centerElement = centerMarkerElementRef.current;
+    if (!centerElement) {
+      return;
+    }
+
+    centerElement.classList.toggle("lore-center-marker--loading", isLoading);
+  }, [isLoading]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -182,8 +309,8 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
           <LoreResultsPanel
             pinCount={plottableItems.length}
             isLoading={isLoading}
-            error={error}
-            onRetry={requestLore}
+            errorMessage={error}
+            onRetry={() => void requestLore()}
           />
         ) : null}
 
