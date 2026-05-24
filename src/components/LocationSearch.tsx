@@ -8,13 +8,12 @@ import {
 } from "react";
 import { SearchSuggestions } from "@/components/SearchSuggestions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { DEBOUNCE_MS, MIN_QUERY_LENGTH } from "@/lib/mapbox/constants";
+import { DEBOUNCE_MS, MIN_QUERY_LENGTH } from "@/lib/photon/constants";
 import {
-  createSessionToken,
   fetchSuggestions,
-  retrieveLocation,
+  suggestionToLocation,
   type SearchSuggestion,
-} from "@/lib/mapbox/search";
+} from "@/lib/photon/search";
 import type { SelectedLocation } from "@/lib/types/location";
 
 type LocationSearchProps = {
@@ -29,30 +28,17 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
   const [activeIndex, setActiveIndex] = useState(-1);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isRetrieving, setIsRetrieving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
 
   const debouncedQuery = useDebouncedValue(query, DEBOUNCE_MS);
-  const canFetch =
-    sessionToken !== null &&
-    debouncedQuery.trim().length >= MIN_QUERY_LENGTH;
+  const canFetch = debouncedQuery.trim().length >= MIN_QUERY_LENGTH;
   const visibleSuggestions = canFetch ? suggestions : [];
 
-  const ensureSessionToken = useCallback(() => {
-    setSessionToken((current) => current ?? createSessionToken());
-  }, []);
-
-  const resetSession = useCallback(() => {
-    setSessionToken(createSessionToken());
-  }, []);
-
   useEffect(() => {
-    if (!sessionToken || debouncedQuery.trim().length < MIN_QUERY_LENGTH) {
+    if (debouncedQuery.trim().length < MIN_QUERY_LENGTH) {
       return;
     }
 
-    const token = sessionToken;
     let cancelled = false;
 
     async function loadSuggestions() {
@@ -60,7 +46,7 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
       setError(null);
 
       try {
-        const results = await fetchSuggestions(debouncedQuery, token);
+        const results = await fetchSuggestions(debouncedQuery);
         if (!cancelled) {
           setSuggestions(results);
           setActiveIndex(results.length > 0 ? 0 : -1);
@@ -87,41 +73,18 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, sessionToken]);
+  }, [debouncedQuery]);
 
   const handleSelect = useCallback(
-    async (suggestion: SearchSuggestion) => {
-      if (!sessionToken) {
-        return;
-      }
-
-      setIsRetrieving(true);
+    (suggestion: SearchSuggestion) => {
       setError(null);
       setIsOpen(false);
-
-      try {
-        const location = await retrieveLocation(
-          suggestion.mapboxId,
-          sessionToken,
-        );
-        onSelect({
-          ...location,
-          label: suggestion.label || location.label,
-        });
-        setQuery("");
-        setSuggestions([]);
-        setActiveIndex(-1);
-        resetSession();
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to retrieve location",
-        );
-        setIsOpen(true);
-      } finally {
-        setIsRetrieving(false);
-      }
+      onSelect(suggestionToLocation(suggestion));
+      setQuery("");
+      setSuggestions([]);
+      setActiveIndex(-1);
     },
-    [onSelect, resetSession, sessionToken],
+    [onSelect],
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -149,7 +112,7 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
       case "Enter":
         event.preventDefault();
         if (activeIndex >= 0 && visibleSuggestions[activeIndex]) {
-          void handleSelect(visibleSuggestions[activeIndex]);
+          handleSelect(visibleSuggestions[activeIndex]);
         }
         break;
       case "Escape":
@@ -178,7 +141,6 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
             setError(null);
           }}
           onFocus={() => {
-            ensureSessionToken();
             if (visibleSuggestions.length > 0) {
               setIsOpen(true);
             }
@@ -194,17 +156,16 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
           aria-controls={listboxId}
           aria-activedescendant={activeDescendant}
           aria-autocomplete="list"
-          disabled={isRetrieving}
-          className="w-full rounded-xl border border-zinc-300 bg-white px-4 py-4 text-base text-zinc-900 shadow-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+          className="w-full rounded-xl border border-zinc-300 bg-white px-4 py-4 text-base text-zinc-900 shadow-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
         />
-        {(isRetrieving || (canFetch && isLoading)) && (
+        {canFetch && isLoading ? (
           <span
             className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-zinc-400"
             aria-live="polite"
           >
-            {isRetrieving ? "Loading..." : "Searching..."}
+            Searching...
           </span>
-        )}
+        ) : null}
       </div>
 
       {error ? (
@@ -218,7 +179,7 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
           suggestions={visibleSuggestions}
           activeIndex={activeIndex}
           listboxId={listboxId}
-          onSelect={(suggestion) => void handleSelect(suggestion)}
+          onSelect={handleSelect}
           onHover={setActiveIndex}
         />
       ) : null}

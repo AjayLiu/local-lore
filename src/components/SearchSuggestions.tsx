@@ -1,6 +1,6 @@
 "use client";
 
-import type { SearchSuggestion } from "@/lib/mapbox/search";
+import type { SearchSuggestion } from "@/lib/photon/search";
 
 type SearchSuggestionsProps = {
   suggestions: SearchSuggestion[];
@@ -32,7 +32,7 @@ export function SearchSuggestions({
 
         return (
           <li
-            key={suggestion.mapboxId}
+            key={suggestion.id}
             id={`${listboxId}-option-${index}`}
             role="option"
             aria-selected={isActive}

@@ -43,7 +43,7 @@ export function HomePage() {
       </main>
 
       <footer className="pb-8 text-center text-sm text-zinc-500">
-        Powered by Mapbox
+        Search by OpenStreetMap · Map by Mapbox
       </footer>
     </div>
   );
