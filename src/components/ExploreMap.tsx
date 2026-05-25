@@ -427,8 +427,10 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const handleMoveStart = () => {
-      setIsMapMoving(true);
+    const handleMapInteractionStart = (event: { originalEvent?: unknown }) => {
+      if (event.originalEvent) {
+        setIsMapMoving(true);
+      }
     };
 
     const scheduleResolveMapCenterLabel = () => {
@@ -500,7 +502,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       syncPinHeadlinesForZoomRef.current(map.getZoom());
     };
 
-    map.on("movestart", handleMoveStart);
+    map.on("movestart", handleMapInteractionStart);
     map.on("moveend", scheduleResolveMapCenterLabel);
     map.on("moveend", scheduleCachedFetch);
     map.on("moveend", syncMapZoom);
@@ -534,7 +536,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       }
       cachedFetchGenerationRef.current += 1;
       mapReadyRef.current = false;
-      map.off("movestart", handleMoveStart);
+      map.off("movestart", handleMapInteractionStart);
       map.off("moveend", scheduleResolveMapCenterLabel);
       map.off("moveend", scheduleCachedFetch);
       map.off("moveend", syncMapZoom);
