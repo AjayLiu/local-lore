@@ -1,6 +1,11 @@
 import { Redis } from "@upstash/redis";
 import type { LoreItem } from "@/lib/lore/schema";
 import {
+  addJobToPendingQueue,
+  removeJobFromPendingQueue,
+} from "./lore-queue";
+import type { LoreJobStage } from "./lore-stages";
+import {
   loreJobRecordSchema,
   type LoreJobRecord,
   type LoreJobStatus,
@@ -55,6 +60,7 @@ export async function createPendingLoreJob(input: {
   };
 
   await getRedis().set(jobKey(input.jobId), record, { ex: JOB_TTL_SECONDS });
+  await addJobToPendingQueue(input.jobId, record.createdAt);
   return record;
 }
 
@@ -86,6 +92,37 @@ export async function updateLoreJobStatus(
     status: update.status,
     items: update.items,
     error: update.error,
+  };
+
+  if (update.status !== "pending") {
+    await removeJobFromPendingQueue(jobId);
+  }
+
+  await getRedis().set(jobKey(jobId), record, { ex: JOB_TTL_SECONDS });
+  return record;
+}
+
+export async function updateLoreJobProgress(
+  jobId: string,
+  update: {
+    stage: LoreJobStage;
+    stageCount?: number;
+    processingStartedAt?: string;
+  },
+): Promise<LoreJobRecord | null> {
+  const existing = await getLoreJob(jobId);
+  if (!existing) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const record: LoreJobRecord = {
+    ...existing,
+    stage: update.stage,
+    stageCount: update.stageCount,
+    processingStartedAt:
+      update.processingStartedAt ?? existing.processingStartedAt ?? now,
+    stageStartedAt: now,
   };
 
   await getRedis().set(jobKey(jobId), record, { ex: JOB_TTL_SECONDS });

@@ -84,19 +84,29 @@ async function fetchWikipediaPagesByIds(
  * enrich all hits that have intro extract + coordinates, sort by `wordcount`
  * (no distance or monument heuristics). The full eligible set is passed to Gemini.
  */
-export async function fetchNearbyWikipediaArticles(options: {
-  latitude: number;
-  longitude: number;
-  radiusMeters?: number;
-  /** Cap on paginated `nearcoord` search hits before enrichment. */
-  maxSearchResults?: number;
-}): Promise<WikipediaArticle[]> {
+export type FetchNearbyArticlesProgress = {
+  stage: "fetching_nearby";
+  count?: number;
+};
+
+export async function fetchNearbyWikipediaArticles(
+  options: {
+    latitude: number;
+    longitude: number;
+    radiusMeters?: number;
+    /** Cap on paginated `nearcoord` search hits before enrichment. */
+    maxSearchResults?: number;
+  },
+  onProgress?: (progress: FetchNearbyArticlesProgress) => void | Promise<void>,
+): Promise<WikipediaArticle[]> {
   const {
     latitude,
     longitude,
     radiusMeters = DEFAULT_GESEARCH_RADIUS_METERS,
     maxSearchResults = DEFAULT_NEARBY_SEARCH_MAX_RESULTS,
   } = options;
+
+  await onProgress?.({ stage: "fetching_nearby" });
 
   const searchHits = await fetchNearbyWikipediaSearchHits({
     latitude,
@@ -108,6 +118,8 @@ export async function fetchNearbyWikipediaArticles(options: {
   if (searchHits.length === 0) {
     return [];
   }
+
+  await onProgress?.({ stage: "fetching_nearby", count: searchHits.length });
 
   const wordcountByPageId = new Map(
     searchHits.map((hit) => [hit.pageid, hit.wordcount]),

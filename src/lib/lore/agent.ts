@@ -1,5 +1,12 @@
 import { generateText, Output } from "ai";
-import { fetchNearbyWikipediaArticles } from "@/lib/wikipedia/geosearch";
+import {
+  expectedHeadlineCount,
+  type LoreJobStage,
+} from "@/lib/jobs/lore-stages";
+import {
+  fetchNearbyWikipediaArticles,
+  type FetchNearbyArticlesProgress,
+} from "@/lib/wikipedia/geosearch";
 import { loreModel } from "./model";
 import {
   buildLoreSynthesisPrompt,
@@ -14,6 +21,15 @@ export type LoreLocationInput = {
   label: string;
 };
 
+export type LorePipelineProgress = {
+  stage: LoreJobStage;
+  count?: number;
+};
+
+export type LoreProgressReporter = (
+  progress: LorePipelineProgress,
+) => void | Promise<void>;
+
 /**
  * Full lore pipeline for one location search:
  * - Wikipedia HTTP fetches (no Gemini quota)
@@ -21,15 +37,29 @@ export type LoreLocationInput = {
  */
 export async function runLoreForLocation(
   input: LoreLocationInput,
+  onProgress?: LoreProgressReporter,
 ): Promise<LoreItem[]> {
-  const articles = await fetchNearbyWikipediaArticles({
-    latitude: input.latitude,
-    longitude: input.longitude,
-  });
+  const report = async (progress: LorePipelineProgress) => {
+    await onProgress?.(progress);
+  };
+
+  const articles = await fetchNearbyWikipediaArticles(
+    {
+      latitude: input.latitude,
+      longitude: input.longitude,
+    },
+    (fetchProgress: FetchNearbyArticlesProgress) =>
+      report(fetchProgress),
+  );
 
   if (articles.length === 0) {
     throw new Error("NO_NEARBY_ARTICLES");
   }
+
+  await report({ stage: "curating", count: articles.length });
+
+  const headlineCount = expectedHeadlineCount(articles.length);
+  await report({ stage: "generating_headlines", count: headlineCount });
 
   const { output } = await generateText({
     model: loreModel,

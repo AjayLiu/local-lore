@@ -2,6 +2,7 @@ import { runLoreForLocation } from "@/lib/lore/agent";
 import { formatLoreApiError } from "@/lib/lore/errors";
 import {
   getLoreJob,
+  updateLoreJobProgress,
   updateLoreJobStatus,
 } from "@/lib/jobs/lore-job-store";
 import { verifyQStashRequest } from "@/lib/qstash/verify-request";
@@ -62,12 +63,31 @@ export async function POST(req: Request) {
     return Response.json({ ok: true, status: "failed" });
   }
 
-  try {
-    const items = await runLoreForLocation({
-      latitude: job.latitude,
-      longitude: job.longitude,
-      label: job.label,
+  const processingStartedAt =
+    job.processingStartedAt ?? new Date().toISOString();
+
+  if (job.status === "pending") {
+    await updateLoreJobStatus(jobId, { status: "processing" });
+    await updateLoreJobProgress(jobId, {
+      stage: "fetching_nearby",
+      processingStartedAt,
     });
+  }
+
+  try {
+    const items = await runLoreForLocation(
+      {
+        latitude: job.latitude,
+        longitude: job.longitude,
+        label: job.label,
+      },
+      async (progress) => {
+        await updateLoreJobProgress(jobId, {
+          ...progress,
+          processingStartedAt,
+        });
+      },
+    );
 
     await updateLoreJobStatus(jobId, { status: "complete", items });
     return Response.json({ ok: true, status: "complete" });

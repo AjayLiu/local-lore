@@ -16,7 +16,7 @@ import type { LoreItem } from "@/lib/lore/schema";
 import { loreJobResponseSchema } from "@/lib/jobs/types";
 import type { SelectedLocation } from "@/lib/types/location";
 
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = 1000;
 
 type ExploreMapProps = {
   location: SelectedLocation;
@@ -36,6 +36,12 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
   const [loreItems, setLoreItems] = useState<LoreItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queuePosition, setQueuePosition] = useState<number | null>(null);
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [jobStatus, setJobStatus] = useState<
+    "pending" | "processing" | null
+  >(null);
+  const [stageMessage, setStageMessage] = useState<string | null>(null);
 
   const plottableItems = loreItems.filter(isPlottableLoreItem);
 
@@ -46,6 +52,10 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
     setIsLoading(true);
     setError(null);
     setLoreItems([]);
+    setQueuePosition(null);
+    setProgressPercent(0);
+    setJobStatus(null);
+    setStageMessage(null);
     hasFitBoundsRef.current = false;
 
     try {
@@ -112,14 +122,27 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
 
           const job = parsed.data;
           if (job.status === "complete") {
+            setProgressPercent(100);
             setLoreItems(job.items ?? []);
             setIsLoading(false);
+            setQueuePosition(null);
+            setJobStatus(null);
+            setStageMessage(null);
             return;
           }
 
           if (job.status === "failed") {
             throw new Error(job.error ?? "Lore discovery failed");
           }
+
+          setProgressPercent(job.progressPercent ?? 0);
+          setQueuePosition(job.queuePosition ?? null);
+          setStageMessage(job.stageMessage ?? null);
+          setJobStatus(
+            job.status === "pending" || job.status === "processing"
+              ? job.status
+              : null,
+          );
 
           await new Promise((resolve) => {
             const timeout = setTimeout(resolve, POLL_INTERVAL_MS);
@@ -310,6 +333,10 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
             pinCount={plottableItems.length}
             isLoading={isLoading}
             errorMessage={error}
+            queuePosition={queuePosition}
+            progressPercent={progressPercent}
+            jobStatus={jobStatus}
+            stageMessage={stageMessage}
             onRetry={() => void requestLore()}
           />
         ) : null}

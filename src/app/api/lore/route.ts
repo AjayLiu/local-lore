@@ -5,6 +5,9 @@ import {
   isLoreJobStoreConfigured,
   updateLoreJobStatus,
 } from "@/lib/jobs/lore-job-store";
+import { getJobQueuePosition } from "@/lib/jobs/lore-queue";
+import { getLoreJobProgressPercent } from "@/lib/jobs/lore-progress";
+import { formatLoreStageMessage } from "@/lib/jobs/lore-stages";
 import { enqueueLoreJob, isQStashConfigured } from "@/lib/qstash/client";
 import { loreRequestSchema } from "@/lib/lore/schema";
 
@@ -42,11 +45,31 @@ export async function GET(req: Request) {
     return Response.json({ error: "Job not found" }, { status: 404 });
   }
 
+  const queuePosition =
+    job.status === "pending" ? await getJobQueuePosition(job.jobId) : null;
+
+  const progressPercent = getLoreJobProgressPercent({
+    status: job.status,
+    queuePosition: queuePosition ?? undefined,
+    stage: job.stage,
+    processingStartedAt: job.processingStartedAt,
+    stageStartedAt: job.stageStartedAt,
+  });
+
   return Response.json({
     jobId: job.jobId,
     status: job.status,
     items: job.items,
     error: job.error,
+    ...(queuePosition != null ? { queuePosition } : {}),
+    progressPercent,
+    ...(job.stage
+      ? {
+          stage: job.stage,
+          stageCount: job.stageCount,
+          stageMessage: formatLoreStageMessage(job.stage, job.stageCount),
+        }
+      : {}),
   });
 }
 
