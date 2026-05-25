@@ -17,7 +17,7 @@ When you select a location, the app **enqueues** a background job instead of cal
 
 Completed lore jobs are **persisted to Supabase** (one row per Wikipedia `page_id`). The map loads cached cards in the current viewport as small dots; zoom in to see headlines (zoom ≥ 14). Supabase is optional for local dev without env vars.
 
-**API quota:** Each location search uses **one** Gemini `generateText` call (Wikipedia is fetched separately, no AI). Default model is `gemini-3.1-flash-lite`. Override with `LORE_MODEL_ID` in `.env.local` if needed.
+**API quota:** Each location search uses **one** Gemini `generateText` call (Wikipedia is fetched separately, no AI). Models in `LORE_MODEL_ID` and `LORE_MODEL_FALLBACK_IDS` (defaults: `gemini-3.1-flash-lite`, then `gemini-2.5-flash`, then `gemini-2.5-flash-lite`) are **round-robined** per search. On **503 / high demand**, the worker retries with backoff, then tries fallbacks in that order, and leaves the job in `processing` so QStash can redeliver instead of marking it failed immediately.
 
 ## Prerequisites
 

@@ -1,5 +1,5 @@
 import { runLoreForLocation } from "@/lib/lore/agent";
-import { formatLoreApiError } from "@/lib/lore/errors";
+import { formatLoreApiError, isGeminiTransientError } from "@/lib/lore/errors";
 import { upsertLoreCards } from "@/lib/lore/supabase-cache";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 import {
@@ -120,8 +120,15 @@ export async function POST(req: Request) {
       });
     }
 
-    console.error("Lore pipeline failed:", error);
     const { message, status } = formatLoreApiError(error);
+
+    if (isGeminiTransientError(error)) {
+      console.error("Lore pipeline transient failure (QStash will retry):", error);
+      // Leave job in "processing" so the client keeps polling and QStash can redeliver.
+      return Response.json({ error: message, retryable: true }, { status });
+    }
+
+    console.error("Lore pipeline failed:", error);
     await updateLoreJobStatus(jobId, { status: "failed", error: message });
     return Response.json({ error: message }, { status });
   }
