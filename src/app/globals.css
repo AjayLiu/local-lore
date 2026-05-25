@@ -58,6 +58,11 @@ body {
   font-weight: 600;
   line-height: 1.25;
   text-align: center;
+  transition: opacity 0.15s ease;
+}
+
+.lore-map-pin--compact .lore-map-pin__label {
+  display: none;
 }
 
 .lore-map-pin__dot {

@@ -7,10 +7,15 @@ import {
 
 type LoreStoryCardProps = {
   item: PlottableLoreItem;
-  onClose: () => void;
+  onClose?: () => void;
+  showCloseButton?: boolean;
 };
 
-export function LoreStoryCard({ item, onClose }: LoreStoryCardProps) {
+export function LoreStoryCard({
+  item,
+  onClose,
+  showCloseButton = true,
+}: LoreStoryCardProps) {
   const title = getLoreHeadline(item);
   const displayTitle = item.headline ?? item.title ?? title;
 
@@ -20,14 +25,16 @@ export function LoreStoryCard({ item, onClose }: LoreStoryCardProps) {
       role="dialog"
       aria-labelledby="lore-story-card-title"
     >
-      <button
-        type="button"
-        onClick={onClose}
-        className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900/70 text-lg leading-none text-white transition hover:bg-zinc-900"
-        aria-label="Close story"
-      >
-        ×
-      </button>
+      {showCloseButton && onClose ? (
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900/70 text-lg leading-none text-white transition hover:bg-zinc-900"
+          aria-label="Close story"
+        >
+          ×
+        </button>
+      ) : null}
 
       {item.imageUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -40,7 +47,7 @@ export function LoreStoryCard({ item, onClose }: LoreStoryCardProps) {
         />
       ) : null}
 
-      <div className="p-4 pr-12">
+      <div className={`p-4 ${showCloseButton && onClose ? "pr-12" : ""}`}>
         <h2
           id="lore-story-card-title"
           className="text-base font-semibold text-zinc-900"

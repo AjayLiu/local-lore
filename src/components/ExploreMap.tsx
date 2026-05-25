@@ -21,15 +21,12 @@ import {
   type CachedLorePin,
 } from "@/lib/lore/cached-pin";
 import { cachedLoreResponseSchema } from "@/lib/lore/cached-pin-response";
-import { createLorePinElement } from "@/lib/mapbox/lore-pin";
 import {
-  CACHED_LORE_DOTS_LAYER_ID,
-  CACHED_LORE_LABELS_LAYER_ID,
-  cachedPinsToGeoJSON,
-  ensureCachedLoreLayers,
-  removeCachedLoreLayers,
-  setCachedLoreGeoJSON,
-} from "@/lib/mapbox/cached-lore-layers";
+  createLorePinElement,
+  LORE_PIN_HEADLINE_MIN_ZOOM,
+  setLorePinHeadlineVisible,
+  truncateHeadline,
+} from "@/lib/mapbox/lore-pin";
 import {
   LORE_CARD_CENTER_OFFSET,
   LORE_CARD_MAP_PADDING,
@@ -72,15 +69,28 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
   const userCenterRef = useRef(userCenter ?? null);
   userCenterRef.current = userCenter ?? null;
   const loreMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
+  const cachedMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const cardMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const hasFitBoundsRef = useRef(false);
   const submittedForId = useRef<string | null>(null);
   const pollAbortRef = useRef<AbortController | null>(null);
   const cachedFetchGenerationRef = useRef(0);
-  const cachedLayersReadyRef = useRef(false);
+  const mapReadyRef = useRef(false);
   const fetchCachedInViewportRef = useRef<() => Promise<void>>(async () => {});
   const activePageIdsRef = useRef<ReadonlySet<number>>(new Set());
-  const [cachedLayersReady, setCachedLayersReady] = useState(false);
+  const syncPinHeadlinesForZoomRef = useRef<(zoom: number) => void>(() => {});
+
+  const syncPinHeadlinesForZoom = useCallback((zoom: number) => {
+    const showHeadlines = zoom >= LORE_PIN_HEADLINE_MIN_ZOOM;
+    for (const marker of loreMarkersRef.current.values()) {
+      setLorePinHeadlineVisible(marker.getElement(), showHeadlines);
+    }
+    for (const marker of cachedMarkersRef.current.values()) {
+      setLorePinHeadlineVisible(marker.getElement(), showHeadlines);
+    }
+  }, []);
+
+  syncPinHeadlinesForZoomRef.current = syncPinHeadlinesForZoom;
 
   const [activeSearch, setActiveSearch] = useState<SelectedLocation | null>(
     null,
@@ -124,6 +134,25 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
     }
     return ids;
   }, [plottableItems]);
+
+  const hiddenCachedPageIds = useMemo(() => {
+    const ids = new Set(activePageIds);
+    if (selectedPinKey) {
+      const pageId = Number(selectedPinKey);
+      if (
+        Number.isFinite(pageId) &&
+        cachedPins.some((pin) => pin.pageId === pageId)
+      ) {
+        ids.add(pageId);
+      }
+    }
+    return ids;
+  }, [activePageIds, selectedPinKey, cachedPins]);
+
+  const displayCachedPins = useMemo(
+    () => cachedPins.filter((pin) => !hiddenCachedPageIds.has(pin.pageId)),
+    [cachedPins, hiddenCachedPageIds],
+  );
 
   const selectedPinItem = useMemo((): PlottableLoreItem | null => {
     if (!selectedPinKey) {
@@ -314,21 +343,9 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
     });
   }, []);
 
-  const refreshCachedLayer = useCallback(
-    (pins: CachedLorePin[], excludeIds: ReadonlySet<number>) => {
-      const map = mapRef.current;
-      if (!map || !cachedLayersReadyRef.current) {
-        return;
-      }
-
-      setCachedLoreGeoJSON(map, cachedPinsToGeoJSON(pins, excludeIds));
-    },
-    [],
-  );
-
   const fetchCachedInViewport = useCallback(async () => {
     const map = mapRef.current;
-    if (!map || !cachedLayersReadyRef.current) {
+    if (!map || !mapReadyRef.current) {
       return;
     }
 
@@ -364,57 +381,20 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       }
 
       setCachedPins(parsed.data.items);
-      refreshCachedLayer(parsed.data.items, activePageIdsRef.current);
     } catch {
       // Cached pins are optional; ignore fetch errors.
     }
-  }, [refreshCachedLayer]);
+  }, []);
 
   fetchCachedInViewportRef.current = fetchCachedInViewport;
   activePageIdsRef.current = activePageIds;
 
-  const handleCachedPinClick = useCallback(
-    (event: mapboxgl.MapMouseEvent & { features?: mapboxgl.GeoJSONFeature[] }) => {
-      const feature = event.features?.[0];
-      if (!feature?.properties) {
-        return;
-      }
-
-      const pageIdRaw = feature.properties.pageId;
-      const pageId =
-        typeof pageIdRaw === "number"
-          ? pageIdRaw
-          : typeof pageIdRaw === "string"
-            ? Number(pageIdRaw)
-            : NaN;
-
-      if (!Number.isFinite(pageId)) {
-        return;
-      }
-
-      const pin =
-        cachedPins.find((item) => item.pageId === pageId) ??
-        ({
-          pageId,
-          title: String(feature.properties.title ?? ""),
-          headline: String(feature.properties.headline ?? ""),
-          hook: String(feature.properties.hook ?? ""),
-          wikipediaUrl: String(feature.properties.wikipediaUrl ?? ""),
-          latitude: Number(feature.properties.latitude),
-          longitude: Number(feature.properties.longitude),
-          ...(feature.properties.imageUrl
-            ? { imageUrl: String(feature.properties.imageUrl) }
-            : {}),
-        } satisfies CachedLorePin);
-
-      if (!Number.isFinite(pin.latitude) || !Number.isFinite(pin.longitude)) {
-        return;
-      }
-
-      setSelectedPinKey(String(pageId));
+  const handleCachedPinSelect = useCallback(
+    (pin: CachedLorePin) => {
+      setSelectedPinKey(String(pin.pageId));
       centerMapOnPin(cachedPinToLoreItem(pin));
     },
-    [cachedPins, centerMapOnPin],
+    [centerMapOnPin],
   );
 
   useEffect(() => {
@@ -495,24 +475,29 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       }, DEBOUNCE_MS);
     };
 
-    const initCachedLayers = () => {
-      ensureCachedLoreLayers(map);
-      cachedLayersReadyRef.current = true;
-      setCachedLayersReady(true);
+    const startCachedPinFetch = () => {
+      mapReadyRef.current = true;
       scheduleCachedFetch();
     };
 
     if (map.loaded()) {
-      initCachedLayers();
+      startCachedPinFetch();
     } else {
-      map.once("load", initCachedLayers);
+      map.once("load", startCachedPinFetch);
     }
+
+    const syncMapZoom = () => {
+      syncPinHeadlinesForZoomRef.current(map.getZoom());
+    };
 
     map.on("movestart", handleMoveStart);
     map.on("moveend", scheduleResolveMapCenterLabel);
     map.on("moveend", scheduleCachedFetch);
+    map.on("moveend", syncMapZoom);
+    map.on("zoom", syncMapZoom);
     map.on("zoomend", scheduleCachedFetch);
     scheduleResolveMapCenterLabel();
+    syncMapZoom();
 
     const pendingUserCenter = userCenterRef.current;
     if (pendingUserCenter) {
@@ -538,61 +523,29 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
         clearTimeout(cachedDebounceTimer);
       }
       cachedFetchGenerationRef.current += 1;
-      cachedLayersReadyRef.current = false;
-      setCachedLayersReady(false);
+      mapReadyRef.current = false;
       map.off("movestart", handleMoveStart);
       map.off("moveend", scheduleResolveMapCenterLabel);
       map.off("moveend", scheduleCachedFetch);
+      map.off("moveend", syncMapZoom);
+      map.off("zoom", syncMapZoom);
       map.off("zoomend", scheduleCachedFetch);
-      removeCachedLoreLayers(map);
       resolveCenterGenerationRef.current += 1;
       const loreMarkers = loreMarkersRef.current;
       for (const marker of loreMarkers.values()) {
         marker.remove();
       }
       loreMarkers.clear();
+      for (const marker of cachedMarkersRef.current.values()) {
+        marker.remove();
+      }
+      cachedMarkersRef.current.clear();
       cardMarkerRef.current?.remove();
       cardMarkerRef.current = null;
       map.remove();
       mapRef.current = null;
     };
   }, [initialCenter.latitude, initialCenter.longitude]);
-
-  useEffect(() => {
-    refreshCachedLayer(cachedPins, activePageIds);
-  }, [cachedPins, activePageIds, refreshCachedLayer]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !cachedLayersReady) {
-      return;
-    }
-
-    map.on("click", CACHED_LORE_DOTS_LAYER_ID, handleCachedPinClick);
-    map.on("click", CACHED_LORE_LABELS_LAYER_ID, handleCachedPinClick);
-
-    const setPointerCursor = () => {
-      map.getCanvas().style.cursor = "pointer";
-    };
-    const resetCursor = () => {
-      map.getCanvas().style.cursor = "";
-    };
-
-    map.on("mouseenter", CACHED_LORE_DOTS_LAYER_ID, setPointerCursor);
-    map.on("mouseenter", CACHED_LORE_LABELS_LAYER_ID, setPointerCursor);
-    map.on("mouseleave", CACHED_LORE_DOTS_LAYER_ID, resetCursor);
-    map.on("mouseleave", CACHED_LORE_LABELS_LAYER_ID, resetCursor);
-
-    return () => {
-      map.off("click", CACHED_LORE_DOTS_LAYER_ID, handleCachedPinClick);
-      map.off("click", CACHED_LORE_LABELS_LAYER_ID, handleCachedPinClick);
-      map.off("mouseenter", CACHED_LORE_DOTS_LAYER_ID, setPointerCursor);
-      map.off("mouseenter", CACHED_LORE_LABELS_LAYER_ID, setPointerCursor);
-      map.off("mouseleave", CACHED_LORE_DOTS_LAYER_ID, resetCursor);
-      map.off("mouseleave", CACHED_LORE_LABELS_LAYER_ID, resetCursor);
-      resetCursor();
-    };
-  }, [cachedLayersReady, handleCachedPinClick]);
 
   const handleCenterMap = useCallback(
     (coords: { latitude: number; longitude: number }) => {
@@ -697,6 +650,10 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
         selected: isSelected,
         onClick: () => handlePinSelect(item, id),
       });
+      setLorePinHeadlineVisible(
+        element,
+        map.getZoom() >= LORE_PIN_HEADLINE_MIN_ZOOM,
+      );
       const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
         .setLngLat(lngLat)
         .addTo(map);
@@ -704,6 +661,57 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       loreMarkersRef.current.set(id, marker);
     });
   }, [plottableItems, selectedPinKey, handlePinSelect]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    const nextIds = new Set(
+      displayCachedPins.map((pin) => String(pin.pageId)),
+    );
+
+    for (const [id, marker] of cachedMarkersRef.current) {
+      if (!nextIds.has(id)) {
+        marker.remove();
+        cachedMarkersRef.current.delete(id);
+      }
+    }
+
+    for (const pin of displayCachedPins) {
+      const id = String(pin.pageId);
+      const lngLat: [number, number] = [pin.longitude, pin.latitude];
+      const headline = pin.headline;
+      const isSelected = selectedPinKey === id;
+
+      const existing = cachedMarkersRef.current.get(id);
+      if (existing) {
+        existing.setLngLat(lngLat);
+        const element = existing.getElement();
+        element.classList.toggle("lore-map-pin--selected", isSelected);
+        const label = element.querySelector(".lore-map-pin__label");
+        if (label) {
+          label.textContent = truncateHeadline(headline);
+        }
+        continue;
+      }
+
+      const element = createLorePinElement(headline, {
+        selected: isSelected,
+        onClick: () => handleCachedPinSelect(pin),
+      });
+      setLorePinHeadlineVisible(
+        element,
+        map.getZoom() >= LORE_PIN_HEADLINE_MIN_ZOOM,
+      );
+      const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
+        .setLngLat(lngLat)
+        .addTo(map);
+
+      cachedMarkersRef.current.set(id, marker);
+    }
+  }, [displayCachedPins, selectedPinKey, handleCachedPinSelect]);
 
   useEffect(() => {
     const map = mapRef.current;

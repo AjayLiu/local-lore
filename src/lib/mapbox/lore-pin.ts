@@ -1,5 +1,8 @@
 const MAX_HEADLINE_LENGTH = 52;
 
+/** Headline labels on map pins show at this zoom and closer. */
+export const LORE_PIN_HEADLINE_MIN_ZOOM = 10;
+
 export function truncateHeadline(headline: string): string {
   if (headline.length <= MAX_HEADLINE_LENGTH) {
     return headline;
@@ -36,6 +39,13 @@ export function createLorePinElement(
   }
 
   return root;
+}
+
+export function setLorePinHeadlineVisible(
+  element: HTMLElement,
+  visible: boolean,
+): void {
+  element.classList.toggle("lore-map-pin--compact", !visible);
 }
 
 export function buildLorePopupHtml(item: {
