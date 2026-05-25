@@ -9,6 +9,7 @@ import { getJobQueuePosition } from "@/lib/jobs/lore-queue";
 import { getLoreJobProgressPercent } from "@/lib/jobs/lore-progress";
 import { formatLoreStageMessage } from "@/lib/jobs/lore-stages";
 import { enqueueLoreJob, isQStashConfigured } from "@/lib/qstash/client";
+import { recordRecentSearch } from "@/lib/lore/recent-searches";
 import { loreRequestSchema } from "@/lib/lore/schema";
 
 function getQueueConfigError(): string | null {
@@ -94,11 +95,25 @@ export async function POST(req: Request) {
     );
   }
 
-  const { latitude, longitude, label } = parsed.data;
+  const { latitude, longitude, label, private: isPrivate } = parsed.data;
   const jobId = randomUUID();
 
   try {
-    await createPendingLoreJob({ jobId, latitude, longitude, label });
+    await createPendingLoreJob({
+      jobId,
+      latitude,
+      longitude,
+      label,
+      private: isPrivate,
+    });
+    if (!isPrivate) {
+      await recordRecentSearch({
+        label,
+        latitude,
+        longitude,
+        searchedAt: new Date().toISOString(),
+      });
+    }
     await enqueueLoreJob(jobId);
   } catch (error) {
     console.error("Failed to enqueue lore job:", error);

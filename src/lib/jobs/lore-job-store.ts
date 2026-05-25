@@ -49,6 +49,7 @@ export async function createPendingLoreJob(input: {
   latitude: number;
   longitude: number;
   label: string;
+  private?: boolean;
 }): Promise<LoreJobRecord> {
   const record: LoreJobRecord = {
     jobId: input.jobId,
@@ -56,6 +57,7 @@ export async function createPendingLoreJob(input: {
     latitude: input.latitude,
     longitude: input.longitude,
     label: input.label,
+    ...(input.private ? { private: true } : {}),
     createdAt: new Date().toISOString(),
   };
 

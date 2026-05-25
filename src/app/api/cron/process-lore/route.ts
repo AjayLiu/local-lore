@@ -93,7 +93,7 @@ export async function POST(req: Request) {
 
     await updateLoreJobStatus(jobId, { status: "complete", items });
 
-    if (isSupabaseConfigured()) {
+    if (isSupabaseConfigured() && !job.private) {
       try {
         await upsertLoreCards(items, {
           label: job.label,

@@ -7,6 +7,9 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import { LocationSearch } from "@/components/LocationSearch";
 import { LoreResultsPanel } from "@/components/LoreResultsPanel";
 import { LoreStoryCard } from "@/components/LoreStoryCard";
+import { PrivateModeToggle } from "@/components/PrivateModeToggle";
+import { RecentSearchesLeaderboard } from "@/components/RecentSearchesLeaderboard";
+import { usePrivateMode } from "@/hooks/usePrivateMode";
 import type { MapCenter } from "@/lib/geolocation/get-initial-map-center";
 import { DEBOUNCE_MS } from "@/lib/photon/constants";
 import {
@@ -38,6 +41,7 @@ import {
   isPlottableLoreItem,
   type PlottableLoreItem,
 } from "@/lib/lore/plottable-items";
+import type { RecentSearchEntry } from "@/lib/lore/recent-searches";
 import type { LoreItem } from "@/lib/lore/schema";
 import { loreJobResponseSchema } from "@/lib/jobs/types";
 import type { SelectedLocation } from "@/lib/types/location";
@@ -64,6 +68,7 @@ type ExploreMapProps = {
 };
 
 export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
+  const { privateMode, setPrivateMode } = usePrivateMode();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const userCenterRef = useRef(userCenter ?? null);
@@ -76,9 +81,9 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
   const pollAbortRef = useRef<AbortController | null>(null);
   const cachedFetchGenerationRef = useRef(0);
   const mapReadyRef = useRef(false);
-  const fetchCachedInViewportRef = useRef<() => Promise<void>>(async () => {});
+  const fetchCachedInViewportRef = useRef<() => Promise<void>>(async () => { });
   const activePageIdsRef = useRef<ReadonlySet<number>>(new Set());
-  const syncPinHeadlinesForZoomRef = useRef<(zoom: number) => void>(() => {});
+  const syncPinHeadlinesForZoomRef = useRef<(zoom: number) => void>(() => { });
 
   const syncPinHeadlinesForZoom = useCallback((zoom: number) => {
     const showHeadlines = zoom >= LORE_PIN_HEADLINE_MIN_ZOOM;
@@ -119,6 +124,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
   const [selectedPinKey, setSelectedPinKey] = useState<string | null>(null);
   const [cardMountEl, setCardMountEl] = useState<HTMLDivElement | null>(null);
   const [cachedPins, setCachedPins] = useState<CachedLorePin[]>([]);
+  const [recentSearchesRefreshKey, setRecentSearchesRefreshKey] = useState(0);
 
   const plottableItems = useMemo(
     () => loreItems.filter(isPlottableLoreItem),
@@ -198,6 +204,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
           latitude: search.latitude,
           longitude: search.longitude,
           label: search.label,
+          private: privateMode,
         }),
       });
 
@@ -205,9 +212,9 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       if (!response.ok) {
         const message =
           typeof data === "object" &&
-          data !== null &&
-          "error" in data &&
-          typeof (data as { error: unknown }).error === "string"
+            data !== null &&
+            "error" in data &&
+            typeof (data as { error: unknown }).error === "string"
             ? (data as { error: string }).error
             : "Failed to start lore discovery";
         throw new Error(message);
@@ -215,9 +222,9 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
 
       const jobId =
         typeof data === "object" &&
-        data !== null &&
-        "jobId" in data &&
-        typeof (data as { jobId: unknown }).jobId === "string"
+          data !== null &&
+          "jobId" in data &&
+          typeof (data as { jobId: unknown }).jobId === "string"
           ? (data as { jobId: string }).jobId
           : null;
 
@@ -239,9 +246,9 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
           if (!statusResponse.ok) {
             const message =
               typeof statusData === "object" &&
-              statusData !== null &&
-              "error" in statusData &&
-              typeof (statusData as { error: unknown }).error === "string"
+                statusData !== null &&
+                "error" in statusData &&
+                typeof (statusData as { error: unknown }).error === "string"
                 ? (statusData as { error: string }).error
                 : "Failed to check lore job status";
             throw new Error(message);
@@ -260,6 +267,9 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
             setQueuePosition(null);
             setJobStatus(null);
             setStageMessage(null);
+            if (!privateMode) {
+              setRecentSearchesRefreshKey((key) => key + 1);
+            }
             return;
           }
 
@@ -309,7 +319,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       );
       setIsLoading(false);
     }
-  }, []);
+  }, [privateMode]);
 
   useEffect(() => {
     if (!activeSearch) {
@@ -563,6 +573,42 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
     [],
   );
 
+  const goToRecentSearch = useCallback(
+    (entry: RecentSearchEntry) => {
+      const map = mapRef.current;
+      if (!map) {
+        return;
+      }
+
+      pollAbortRef.current?.abort();
+      pollAbortRef.current = null;
+      submittedForId.current = null;
+      setActiveSearch(null);
+      setIsLoading(false);
+      setError(null);
+      setLoreItems([]);
+      setQueuePosition(null);
+      setProgressPercent(0);
+      setJobStatus(null);
+      setStageMessage(null);
+      setSelectedPinKey(null);
+      hasFitBoundsRef.current = false;
+
+      const onIdle = () => {
+        map.off("idle", onIdle);
+        void fetchCachedInViewportRef.current();
+      };
+
+      map.once("idle", onIdle);
+      map.flyTo({
+        center: [entry.longitude, entry.latitude],
+        zoom: DEFAULT_MAP_ZOOM,
+        duration: 1200,
+      });
+    },
+    [],
+  );
+
   useEffect(() => {
     const center = userCenterRef.current;
     if (!center) {
@@ -800,13 +846,13 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
 
       {cardMountEl && selectedPinItem
         ? createPortal(
-            <LoreStoryCard item={selectedPinItem} onClose={handleCloseCard} />,
-            cardMountEl,
-          )
+          <LoreStoryCard item={selectedPinItem} onClose={handleCloseCard} />,
+          cardMountEl,
+        )
         : null}
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center p-3 sm:p-4">
-        <div className="pointer-events-auto rounded-lg bg-white/95 px-3 py-1.5 text-center shadow-md backdrop-blur-sm">
+        <div className="rounded-lg bg-white/95 px-3 py-1.5 text-center shadow-md backdrop-blur-sm">
           <p className="font-lore text-xl leading-none text-amber-900 sm:text-2xl">
             Local Lore
           </p>
@@ -814,6 +860,13 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
             AI-powered local history explorer
           </p>
         </div>
+      </div>
+
+      <div className="absolute left-3 top-3 z-20 sm:left-4 sm:top-4">
+        <RecentSearchesLeaderboard
+          onSelect={goToRecentSearch}
+          refreshKey={recentSearchesRefreshKey}
+        />
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col items-center gap-3 p-4 sm:p-6">
@@ -835,31 +888,45 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
           />
         ) : null}
 
-        <button
-          type="button"
-          onClick={() => void handleSearchHere()}
-          disabled={searchHereDisabled}
-          className="search-here-btn pointer-events-auto cursor-pointer whitespace-nowrap rounded-xl bg-amber-600 px-8 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {crosshairPulseKey > 0 && !searchHereDisabled ? (
-            <span
-              key={crosshairPulseKey}
-              className="search-here-btn__pulse"
-              aria-hidden
-            />
-          ) : null}
-          {!isSearchingHere ? (
-            <SearchPinIcon className="h-4 w-4 shrink-0 text-sky-100 drop-shadow-sm" />
-          ) : null}
-          <span>{searchHereText}</span>
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleSearchHere()}
+            disabled={searchHereDisabled}
+            className="search-here-btn pointer-events-auto cursor-pointer whitespace-nowrap rounded-xl bg-amber-600 px-8 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {crosshairPulseKey > 0 && !searchHereDisabled ? (
+              <span
+                key={crosshairPulseKey}
+                className="search-here-btn__pulse"
+                aria-hidden
+              />
+            ) : null}
+            {!isSearchingHere ? (
+              <SearchPinIcon className="h-4 w-4 shrink-0 text-sky-100 drop-shadow-sm" />
+            ) : null}
+            <span>{searchHereText}</span>
+          </button>
+          <PrivateModeToggle
+            enabled={privateMode}
+            onChange={setPrivateMode}
+          />
+        </div>
 
         <div className="pointer-events-auto w-full max-w-lg">
           <LocationSearch variant="map" mode="center" onCenterMap={handleCenterMap} />
         </div>
 
         <p className="text-center text-xs text-zinc-400">
-          Search by OpenStreetMap · Map by Mapbox
+          Search by OpenStreetMap · Map by Mapbox ·{" "}
+          <a
+            href="/about"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="pointer-events-auto text-zinc-500 underline decoration-zinc-400/60 underline-offset-2 transition hover:text-zinc-300"
+          >
+            About this project
+          </a>
         </p>
       </div>
     </div>

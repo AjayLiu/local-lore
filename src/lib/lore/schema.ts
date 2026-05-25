@@ -25,6 +25,7 @@ export const loreRequestSchema = z.object({
   latitude: z.number(),
   longitude: z.number(),
   label: z.string().min(1),
+  private: z.boolean().optional().default(false),
 });
 
 export type LoreRequest = z.infer<typeof loreRequestSchema>;

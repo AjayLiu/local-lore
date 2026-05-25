@@ -17,6 +17,7 @@ export const loreJobRecordSchema = z.object({
   latitude: z.number(),
   longitude: z.number(),
   label: z.string(),
+  private: z.boolean().optional(),
   items: z.array(loreItemSchema).optional(),
   error: z.string().optional(),
   createdAt: z.string(),
