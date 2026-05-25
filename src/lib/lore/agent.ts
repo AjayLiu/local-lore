@@ -5,6 +5,7 @@ import {
   buildLoreSynthesisPrompt,
   LORE_SYNTHESIS_SYSTEM,
 } from "./prompt";
+import { attachWikipediaImages } from "./attach-images";
 import { loreItemSchema, type LoreItem } from "./schema";
 
 export type LoreLocationInput = {
@@ -38,5 +39,5 @@ export async function runLoreForLocation(
     prompt: buildLoreSynthesisPrompt(input.label, articles),
   });
 
-  return output;
+  return attachWikipediaImages(output, articles);
 }

@@ -104,7 +104,7 @@ src/
     photon/                # Photon geocoding API client
     qstash/                # QStash publish client
     types/                 # Shared TypeScript types
-    wikipedia/             # Wikipedia geosearch client
+    wikipedia/             # Wikipedia nearcoord search + article enrichment
 ```
 
 ## What's next

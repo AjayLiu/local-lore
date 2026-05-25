@@ -8,6 +8,8 @@ export const loreItemSchema = z.object({
   latitude: z.number(),
   longitude: z.number(),
   wikipediaUrl: z.string().url(),
+  /** Wikipedia lead image; attached server-side from pageId, not from the model. */
+  imageUrl: z.string().url().optional(),
 });
 
 export type LoreItem = z.infer<typeof loreItemSchema>;

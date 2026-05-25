@@ -29,8 +29,13 @@ export function buildLorePopupHtml(item: {
   title?: string;
   hook?: string;
   wikipediaUrl?: string;
+  imageUrl?: string;
 }): string {
-  const title = item.headline ?? item.title ?? "Local story";
+  const displayTitle = item.headline ?? item.title ?? "Local story";
+  const imageAlt = item.title ?? displayTitle;
+  const image = item.imageUrl
+    ? `<img class="lore-map-popup__image" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(imageAlt)}" loading="lazy" decoding="async" />`
+    : "";
   const hook = item.hook
     ? `<p class="lore-map-popup__hook">${escapeHtml(item.hook)}</p>`
     : "";
@@ -39,7 +44,8 @@ export function buildLorePopupHtml(item: {
     : "";
 
   return `<div class="lore-map-popup">
-    <p class="lore-map-popup__title">${escapeHtml(title)}</p>
+    ${image}
+    <p class="lore-map-popup__title">${escapeHtml(displayTitle)}</p>
     ${hook}
     ${link}
   </div>`;

@@ -250,7 +250,7 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
       const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
         .setLngLat(lngLat)
         .setPopup(
-          new mapboxgl.Popup({ offset: 16, maxWidth: "300px" }).setHTML(
+          new mapboxgl.Popup({ offset: 16, maxWidth: "320px" }).setHTML(
             buildLorePopupHtml(item),
           ),
         )
