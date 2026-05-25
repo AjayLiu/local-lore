@@ -1,5 +1,7 @@
 import { runLoreForLocation } from "@/lib/lore/agent";
 import { formatLoreApiError } from "@/lib/lore/errors";
+import { upsertLoreCards } from "@/lib/lore/supabase-cache";
+import { isSupabaseConfigured } from "@/lib/supabase/server";
 import {
   getLoreJob,
   updateLoreJobProgress,
@@ -90,6 +92,19 @@ export async function POST(req: Request) {
     );
 
     await updateLoreJobStatus(jobId, { status: "complete", items });
+
+    if (isSupabaseConfigured()) {
+      try {
+        await upsertLoreCards(items, {
+          label: job.label,
+          latitude: job.latitude,
+          longitude: job.longitude,
+        });
+      } catch (cacheError) {
+        console.error("Failed to persist lore cards to Supabase:", cacheError);
+      }
+    }
+
     return Response.json({ ok: true, status: "complete" });
   } catch (error) {
     if (

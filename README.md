@@ -15,7 +15,7 @@ When you select a location, the app **enqueues** a background job instead of cal
 3. The worker fetches Wikipedia articles and runs **one** `generateText` call per job.
 4. The map polls `GET /api/lore?jobId=…` every 2s until pins are ready.
 
-There is **no geographic cache** yet (Supabase PostGIS is planned for a later milestone).
+Completed lore jobs are **persisted to Supabase** (one row per Wikipedia `page_id`). The map loads cached cards in the current viewport as small dots; zoom in to see headlines (zoom ≥ 14). Supabase is optional for local dev without env vars.
 
 **API quota:** Each location search uses **one** Gemini `generateText` call (Wikipedia is fetched separately, no AI). Default model is `gemini-3.1-flash-lite`. Override with `LORE_MODEL_ID` in `.env.local` if needed.
 
@@ -25,6 +25,7 @@ There is **no geographic cache** yet (Supabase PostGIS is planned for a later mi
 - A [Mapbox](https://account.mapbox.com/) account with a public access token (map display only)
 - A [Google AI](https://aistudio.google.com/apikey) API key for the lore agent
 - [Upstash QStash](https://console.upstash.com/qstash) and [Upstash Redis](https://console.upstash.com/redis) (free tiers)
+- [Supabase](https://supabase.com) project with PostGIS enabled (geographic lore cache)
 
 ## Local development
 
@@ -48,6 +49,16 @@ There is **no geographic cache** yet (Supabase PostGIS is planned for a later mi
    - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
    - `LORE_APP_URL` — your deployed app URL (e.g. `https://your-app.vercel.app`)
    - Optional `LORE_APP_URL_LOCAL` — only if you need a non-default local callback port
+   - Optional `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — geographic cache (see below)
+
+### Supabase geographic cache
+
+1. Create a Supabase project and enable the **PostGIS** extension (Database → Extensions).
+2. Run the SQL in [`supabase/migrations/001_lore_cards.sql`](supabase/migrations/001_lore_cards.sql) in the SQL editor (creates `lore_cards` and `get_lore_cards_in_bbox`).
+3. Add `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (service role, server-only) to `.env.local` and Vercel.
+4. After a lore search completes, rows appear in `lore_cards`. Pan the map to load cached pins via `GET /api/lore/cached?west=&south=&east=&north=`.
+
+Re-searching the same Wikipedia article **updates** the existing row (`page_id` is unique), it does not duplicate.
 
 3. **QStash local dev:** In a second terminal, run the [QStash CLI](https://upstash.com/docs/qstash/howto/local-development):
 
@@ -94,13 +105,16 @@ No extra `vercel.json` configuration is required; Vercel auto-detects Next.js.
 src/
   app/
     api/lore/              # Enqueue + poll lore jobs
-    api/cron/process-lore/ # QStash worker (Gemini synthesis)
+    api/lore/cached/       # Bbox query for cached lore cards
+    api/cron/process-lore/ # QStash worker (Gemini synthesis + Supabase upsert)
   components/              # UI components
   hooks/                   # Shared React hooks
   lib/
     jobs/                  # Redis job store
-    lore/                  # Lore agent schema and synthesis
-    mapbox/                # Mapbox GL access token and map constants
+    lore/                  # Lore agent schema, synthesis, Supabase cache
+    supabase/              # Supabase server client
+    mapbox/                # Mapbox GL token, cached lore layers
+supabase/migrations/       # PostGIS schema for lore_cards
     photon/                # Photon geocoding API client
     qstash/                # QStash publish client
     types/                 # Shared TypeScript types
@@ -109,5 +123,5 @@ src/
 
 ## What's next
 
-- Supabase PostGIS geographic cache (Milestone 2)
+- Geographic search cache (skip Gemini when an area already has enough cached cards)
 - Supabase Realtime instead of polling (optional)
