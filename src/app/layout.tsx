@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Sriracha, Geist, Geist_Mono } from "next/font/google";
+import { GoogleAnalytics } from "@/components/GoogleAnalytics";
+import { GA_MEASUREMENT_ID } from "@/lib/analytics/gtag";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -34,7 +36,12 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${loreDisplay.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {GA_MEASUREMENT_ID ? (
+          <GoogleAnalytics measurementId={GA_MEASUREMENT_ID} />
+        ) : null}
+        {children}
+      </body>
     </html>
   );
 }

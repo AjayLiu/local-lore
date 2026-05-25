@@ -50,6 +50,7 @@ Completed lore jobs are **persisted to Supabase** (one row per Wikipedia `page_i
    - `LORE_APP_URL` — your deployed app URL (e.g. `https://your-app.vercel.app`)
    - Optional `LORE_APP_URL_LOCAL` — only if you need a non-default local callback port
    - Optional `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — geographic cache (see below)
+   - Optional `NEXT_PUBLIC_GA_MEASUREMENT_ID` — Google Analytics 4 (e.g. `G-XXXXXXXXXX`)
 
 ### Supabase geographic cache
 
