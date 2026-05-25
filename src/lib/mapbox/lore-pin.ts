@@ -8,9 +8,15 @@ export function truncateHeadline(headline: string): string {
   return `${headline.slice(0, MAX_HEADLINE_LENGTH - 1)}…`;
 }
 
-export function createLorePinElement(headline: string): HTMLDivElement {
+export function createLorePinElement(
+  headline: string,
+  options?: { onClick?: () => void; selected?: boolean },
+): HTMLDivElement {
   const root = document.createElement("div");
   root.className = "lore-map-pin";
+  if (options?.selected) {
+    root.classList.add("lore-map-pin--selected");
+  }
 
   const label = document.createElement("div");
   label.className = "lore-map-pin__label";
@@ -21,6 +27,14 @@ export function createLorePinElement(headline: string): HTMLDivElement {
   dot.setAttribute("aria-hidden", "true");
 
   root.append(label, dot);
+
+  if (options?.onClick) {
+    root.addEventListener("click", (event) => {
+      event.stopPropagation();
+      options.onClick?.();
+    });
+  }
+
   return root;
 }
 

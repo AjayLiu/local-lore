@@ -4,6 +4,8 @@ import type { SelectedLocation } from "@/lib/types/location";
 export type SearchSuggestion = {
   id: string;
   label: string;
+  /** City or locality name for map-center / search CTAs */
+  areaLabel: string;
   placeFormatted?: string;
   latitude: number;
   longitude: number;
@@ -57,6 +59,18 @@ function buildLabel(properties: PhotonProperties): string {
   return properties.country ?? "Unknown place";
 }
 
+/** Locality-focused label (city, district) for map center and search buttons */
+function buildAreaLabel(properties: PhotonProperties): string {
+  return (
+    properties.city ??
+    properties.district ??
+    properties.name ??
+    properties.state ??
+    properties.country ??
+    "Unknown place"
+  );
+}
+
 function buildPlaceFormatted(properties: PhotonProperties): string | undefined {
   const name = properties.name;
   const streetLine =
@@ -104,18 +118,7 @@ export async function fetchSuggestions(query: string): Promise<SearchSuggestion[
   const data = (await response.json()) as PhotonResponse;
   const features = data.features ?? [];
 
-  return features.map((feature, index) => {
-    const [longitude, latitude] = feature.geometry.coordinates;
-    const properties = feature.properties;
-
-    return {
-      id: buildSuggestionId(feature, index),
-      label: buildLabel(properties),
-      placeFormatted: buildPlaceFormatted(properties),
-      latitude,
-      longitude,
-    };
-  });
+  return features.map((feature, index) => featureToSuggestion(feature, index));
 }
 
 export function suggestionToLocation(
@@ -127,4 +130,90 @@ export function suggestionToLocation(
     latitude: suggestion.latitude,
     longitude: suggestion.longitude,
   };
+}
+
+function featureToSuggestion(
+  feature: PhotonFeature,
+  index: number,
+): SearchSuggestion {
+  const [longitude, latitude] = feature.geometry.coordinates;
+  const properties = feature.properties;
+
+  return {
+    id: buildSuggestionId(feature, index),
+    label: buildLabel(properties),
+    areaLabel: buildAreaLabel(properties),
+    placeFormatted: buildPlaceFormatted(properties),
+    latitude,
+    longitude,
+  };
+}
+
+export async function reverseGeocode(
+  lat: number,
+  lon: number,
+): Promise<SearchSuggestion | null> {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    limit: "1",
+    lang: "en",
+  });
+
+  const reverseBase = PHOTON_API_BASE.replace(/\/api\/?$/, "/reverse");
+  const response = await fetch(`${reverseBase}?${params}`);
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const data = (await response.json()) as PhotonResponse;
+  const feature = data.features?.[0];
+  if (!feature) {
+    return null;
+  }
+
+  return featureToSuggestion(feature, 0);
+}
+
+function formatCoordinateLabel(lat: number, lon: number): string {
+  return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+}
+
+export function locationFromCoordinates(
+  lat: number,
+  lon: number,
+  label?: string,
+): SelectedLocation {
+  return {
+    id: `scan:${lat.toFixed(5)},${lon.toFixed(5)}:${Date.now()}`,
+    label: label ?? formatCoordinateLabel(lat, lon),
+    latitude: lat,
+    longitude: lon,
+  };
+}
+
+export async function locationFromMapCenter(
+  lat: number,
+  lon: number,
+): Promise<SelectedLocation> {
+  const suggestion = await reverseGeocode(lat, lon);
+  const label =
+    suggestion?.areaLabel ??
+    suggestion?.label ??
+    formatCoordinateLabel(lat, lon);
+  return locationFromCoordinates(lat, lon, label);
+}
+
+const CENTER_LABEL_MOVE_THRESHOLD_DEG = 0.001;
+
+export function mapCenterMovedEnough(
+  prev: { latitude: number; longitude: number },
+  next: { latitude: number; longitude: number },
+): boolean {
+  return (
+    Math.abs(prev.latitude - next.latitude) > CENTER_LABEL_MOVE_THRESHOLD_DEG ||
+    Math.abs(prev.longitude - next.longitude) >
+      CENTER_LABEL_MOVE_THRESHOLD_DEG
+  );
 }

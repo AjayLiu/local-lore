@@ -16,11 +16,35 @@ import {
 } from "@/lib/photon/search";
 import type { SelectedLocation } from "@/lib/types/location";
 
-type LocationSearchProps = {
-  onSelect: (location: SelectedLocation) => void;
+type MapCenterCoords = {
+  latitude: number;
+  longitude: number;
 };
 
-export function LocationSearch({ onSelect }: LocationSearchProps) {
+type LocationSearchBaseProps = {
+  variant?: "landing" | "map";
+};
+
+type LocationSearchSelectProps = LocationSearchBaseProps & {
+  mode?: "select";
+  onSelect: (location: SelectedLocation) => void;
+  onCenterMap?: never;
+};
+
+type LocationSearchCenterProps = LocationSearchBaseProps & {
+  mode: "center";
+  onCenterMap: (coords: MapCenterCoords) => void;
+  onSelect?: never;
+};
+
+export type LocationSearchProps =
+  | LocationSearchSelectProps
+  | LocationSearchCenterProps;
+
+export function LocationSearch(props: LocationSearchProps) {
+  const { variant = "landing" } = props;
+  const isMapVariant = variant === "map";
+
   const inputId = useId();
   const listboxId = useId();
   const [query, setQuery] = useState("");
@@ -79,12 +103,20 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
     (suggestion: SearchSuggestion) => {
       setError(null);
       setIsOpen(false);
-      onSelect(suggestionToLocation(suggestion));
       setQuery("");
       setSuggestions([]);
       setActiveIndex(-1);
+
+      if (props.mode === "center") {
+        props.onCenterMap({
+          latitude: suggestion.latitude,
+          longitude: suggestion.longitude,
+        });
+      } else {
+        props.onSelect(suggestionToLocation(suggestion));
+      }
     },
-    [onSelect],
+    [props],
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -125,6 +157,15 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
   const activeDescendant =
     activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined;
 
+  const placeholder =
+    props.mode === "center"
+      ? "Search anywhere else in the world!"
+      : "Search cities, neighborhoods, landmarks...";
+
+  const inputClassName = isMapVariant
+    ? "w-full rounded-xl border border-white/20 bg-white/95 px-4 py-3 text-base text-zinc-900 shadow-lg outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200 backdrop-blur-sm"
+    : "w-full rounded-xl border border-zinc-300 bg-white px-4 py-4 text-base text-zinc-900 shadow-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200";
+
   return (
     <div className="relative w-full">
       <label htmlFor={inputId} className="sr-only">
@@ -149,14 +190,14 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
             window.setTimeout(() => setIsOpen(false), 150);
           }}
           onKeyDown={handleKeyDown}
-          placeholder="Search cities, neighborhoods, landmarks..."
+          placeholder={placeholder}
           autoComplete="off"
           role="combobox"
           aria-expanded={isOpen && visibleSuggestions.length > 0}
           aria-controls={listboxId}
           aria-activedescendant={activeDescendant}
           aria-autocomplete="list"
-          className="w-full rounded-xl border border-zinc-300 bg-white px-4 py-4 text-base text-zinc-900 shadow-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
+          className={inputClassName}
         />
         {canFetch && isLoading ? (
           <span
@@ -169,7 +210,10 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
       </div>
 
       {error ? (
-        <p className="mt-2 text-sm text-red-600" role="alert">
+        <p
+          className={`mt-2 text-sm text-red-600 ${isMapVariant ? "rounded-lg bg-white/95 px-3 py-1" : ""}`}
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
@@ -179,6 +223,7 @@ export function LocationSearch({ onSelect }: LocationSearchProps) {
           suggestions={visibleSuggestions}
           activeIndex={activeIndex}
           listboxId={listboxId}
+          placement={isMapVariant ? "above" : "below"}
           onSelect={handleSelect}
           onHover={setActiveIndex}
         />

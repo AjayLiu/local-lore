@@ -6,6 +6,7 @@ type SearchSuggestionsProps = {
   suggestions: SearchSuggestion[];
   activeIndex: number;
   listboxId: string;
+  placement?: "above" | "below";
   onSelect: (suggestion: SearchSuggestion) => void;
   onHover: (index: number) => void;
 };
@@ -14,6 +15,7 @@ export function SearchSuggestions({
   suggestions,
   activeIndex,
   listboxId,
+  placement = "below",
   onSelect,
   onHover,
 }: SearchSuggestionsProps) {
@@ -21,11 +23,16 @@ export function SearchSuggestions({
     return null;
   }
 
+  const positionClass =
+    placement === "above"
+      ? "bottom-full mb-2"
+      : "mt-2";
+
   return (
     <ul
       id={listboxId}
       role="listbox"
-      className="absolute z-10 mt-2 w-full overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg"
+      className={`absolute z-10 w-full overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg ${positionClass}`}
     >
       {suggestions.map((suggestion, index) => {
         const isActive = index === activeIndex;

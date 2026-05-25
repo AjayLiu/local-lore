@@ -1,16 +1,32 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
+import { LocationSearch } from "@/components/LocationSearch";
 import { LoreResultsPanel } from "@/components/LoreResultsPanel";
+import { LoreStoryCard } from "@/components/LoreStoryCard";
+import type { MapCenter } from "@/lib/geolocation/get-initial-map-center";
+import { DEBOUNCE_MS } from "@/lib/photon/constants";
+import {
+  locationFromMapCenter,
+  mapCenterMovedEnough,
+  reverseGeocode,
+} from "@/lib/photon/search";
 import { getMapboxAccessToken } from "@/lib/mapbox/access-token";
 import { DEFAULT_MAP_ZOOM } from "@/lib/mapbox/constants";
-import { buildLorePopupHtml, createLorePinElement } from "@/lib/mapbox/lore-pin";
+import { createLorePinElement } from "@/lib/mapbox/lore-pin";
+import {
+  LORE_CARD_CENTER_OFFSET,
+  LORE_CARD_MAP_PADDING,
+  LORE_CARD_MARKER_OFFSET,
+} from "@/lib/mapbox/viewport-padding";
 import {
   getLoreHeadline,
   getLoreItemKey,
   isPlottableLoreItem,
+  type PlottableLoreItem,
 } from "@/lib/lore/plottable-items";
 import type { LoreItem } from "@/lib/lore/schema";
 import { loreJobResponseSchema } from "@/lib/jobs/types";
@@ -18,21 +34,47 @@ import type { SelectedLocation } from "@/lib/types/location";
 
 const POLL_INTERVAL_MS = 1000;
 
+function SearchPinIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+      aria-hidden
+    >
+      <path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
+    </svg>
+  );
+}
+
 type ExploreMapProps = {
-  location: SelectedLocation;
-  onSearchAgain: () => void;
+  initialCenter: MapCenter;
 };
 
-export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
+export function ExploreMap({ initialCenter }: ExploreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
-  const centerMarkerRef = useRef<mapboxgl.Marker | null>(null);
-  const centerMarkerElementRef = useRef<HTMLDivElement | null>(null);
   const loreMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
+  const cardMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const hasFitBoundsRef = useRef(false);
   const submittedForId = useRef<string | null>(null);
   const pollAbortRef = useRef<AbortController | null>(null);
 
+  const [activeSearch, setActiveSearch] = useState<SelectedLocation | null>(
+    null,
+  );
+  const [isSearchingHere, setIsSearchingHere] = useState(false);
+  const [mapCenterAreaLabel, setMapCenterAreaLabel] = useState<string | null>(
+    null,
+  );
+  const lastResolvedCenterRef = useRef<{
+    latitude: number;
+    longitude: number;
+    areaLabel: string;
+  } | null>(null);
+  const resolveCenterGenerationRef = useRef(0);
+  const [isMapMoving, setIsMapMoving] = useState(false);
+  const [crosshairPulseKey, setCrosshairPulseKey] = useState(0);
   const [loreItems, setLoreItems] = useState<LoreItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,10 +84,27 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
     "pending" | "processing" | null
   >(null);
   const [stageMessage, setStageMessage] = useState<string | null>(null);
+  const [selectedPinKey, setSelectedPinKey] = useState<string | null>(null);
+  const [cardMountEl, setCardMountEl] = useState<HTMLDivElement | null>(null);
 
   const plottableItems = loreItems.filter(isPlottableLoreItem);
 
-  const requestLore = useCallback(async () => {
+  const selectedPinItem = useMemo(() => {
+    if (!selectedPinKey) {
+      return null;
+    }
+
+    const index = plottableItems.findIndex(
+      (item, i) => getLoreItemKey(item, i) === selectedPinKey,
+    );
+    if (index < 0) {
+      return null;
+    }
+
+    return plottableItems[index] ?? null;
+  }, [selectedPinKey, plottableItems]);
+
+  const requestLore = useCallback(async (search: SelectedLocation) => {
     pollAbortRef.current?.abort();
     pollAbortRef.current = null;
 
@@ -56,6 +115,7 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
     setProgressPercent(0);
     setJobStatus(null);
     setStageMessage(null);
+    setSelectedPinKey(null);
     hasFitBoundsRef.current = false;
 
     try {
@@ -63,9 +123,9 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          latitude: location.latitude,
-          longitude: location.longitude,
-          label: location.label,
+          latitude: search.latitude,
+          longitude: search.longitude,
+          label: search.label,
         }),
       });
 
@@ -177,20 +237,24 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
       );
       setIsLoading(false);
     }
-  }, [location.latitude, location.longitude, location.label]);
+  }, []);
 
   useEffect(() => {
-    if (submittedForId.current === location.id) {
+    if (!activeSearch) {
       return;
     }
 
-    submittedForId.current = location.id;
-    void requestLore();
+    if (submittedForId.current === activeSearch.id) {
+      return;
+    }
+
+    submittedForId.current = activeSearch.id;
+    void requestLore(activeSearch);
 
     return () => {
       pollAbortRef.current?.abort();
     };
-  }, [location.id, requestLore]);
+  }, [activeSearch, requestLore]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -203,43 +267,145 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
     const map = new mapboxgl.Map({
       container,
       style: "mapbox://styles/mapbox/streets-v12",
-      center: [location.longitude, location.latitude],
+      center: [initialCenter.longitude, initialCenter.latitude],
       zoom: DEFAULT_MAP_ZOOM,
     });
 
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
     mapRef.current = map;
 
-    const centerElement = document.createElement("div");
-    centerElement.className = "lore-center-marker";
-    centerMarkerElementRef.current = centerElement;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    centerMarkerRef.current = new mapboxgl.Marker({ element: centerElement })
-      .setLngLat([location.longitude, location.latitude])
-      .addTo(map);
+    const handleMoveStart = () => {
+      setIsMapMoving(true);
+    };
+
+    const scheduleResolveMapCenterLabel = () => {
+      setIsMapMoving(false);
+      setCrosshairPulseKey((key) => key + 1);
+
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
+
+      debounceTimer = setTimeout(() => {
+        const center = map.getCenter();
+        const coords = { latitude: center.lat, longitude: center.lng };
+        const cached = lastResolvedCenterRef.current;
+
+        if (
+          cached &&
+          !mapCenterMovedEnough(cached, coords) &&
+          cached.areaLabel
+        ) {
+          setMapCenterAreaLabel(cached.areaLabel);
+          return;
+        }
+
+        const generation = ++resolveCenterGenerationRef.current;
+
+        void reverseGeocode(center.lat, center.lng).then((suggestion) => {
+          if (generation !== resolveCenterGenerationRef.current) {
+            return;
+          }
+
+          const areaLabel = suggestion?.areaLabel ?? null;
+          if (areaLabel) {
+            lastResolvedCenterRef.current = {
+              latitude: center.lat,
+              longitude: center.lng,
+              areaLabel,
+            };
+          }
+          setMapCenterAreaLabel(areaLabel);
+        });
+      }, DEBOUNCE_MS);
+    };
+
+    map.on("movestart", handleMoveStart);
+    map.on("moveend", scheduleResolveMapCenterLabel);
+    scheduleResolveMapCenterLabel();
 
     return () => {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
+      map.off("movestart", handleMoveStart);
+      map.off("moveend", scheduleResolveMapCenterLabel);
+      resolveCenterGenerationRef.current += 1;
       const loreMarkers = loreMarkersRef.current;
       for (const marker of loreMarkers.values()) {
         marker.remove();
       }
       loreMarkers.clear();
-      centerMarkerRef.current?.remove();
-      centerMarkerRef.current = null;
-      centerMarkerElementRef.current = null;
+      cardMarkerRef.current?.remove();
+      cardMarkerRef.current = null;
       map.remove();
       mapRef.current = null;
     };
-  }, [location.id, location.latitude, location.longitude]);
+  }, [initialCenter.latitude, initialCenter.longitude]);
 
-  useEffect(() => {
-    const centerElement = centerMarkerElementRef.current;
-    if (!centerElement) {
+  const handleCenterMap = useCallback(
+    (coords: { latitude: number; longitude: number }) => {
+      const map = mapRef.current;
+      if (!map) {
+        return;
+      }
+
+      map.flyTo({
+        center: [coords.longitude, coords.latitude],
+        zoom: DEFAULT_MAP_ZOOM,
+        duration: 1200,
+      });
+    },
+    [],
+  );
+
+  const handleSearchHere = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map || isLoading || isSearchingHere) {
       return;
     }
 
-    centerElement.classList.toggle("lore-center-marker--loading", isLoading);
-  }, [isLoading]);
+    const center = map.getCenter();
+    setIsSearchingHere(true);
+
+    try {
+      const search = await locationFromMapCenter(center.lat, center.lng);
+      setActiveSearch(search);
+    } catch {
+      setError("Failed to resolve location for this area");
+    } finally {
+      setIsSearchingHere(false);
+    }
+  }, [isLoading, isSearchingHere]);
+
+  const centerMapOnPin = useCallback((item: PlottableLoreItem) => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    map.easeTo({
+      center: [item.longitude, item.latitude],
+      padding: LORE_CARD_MAP_PADDING,
+      offset: LORE_CARD_CENTER_OFFSET,
+      duration: 700,
+      maxZoom: 16,
+    });
+  }, []);
+
+  const handlePinSelect = useCallback(
+    (item: PlottableLoreItem, pinKey: string) => {
+      setSelectedPinKey(pinKey);
+      centerMapOnPin(item);
+    },
+    [centerMapOnPin],
+  );
+
+  const handleCloseCard = useCallback(() => {
+    setSelectedPinKey(null);
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -262,29 +428,68 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
       const id = getLoreItemKey(item, index);
       const lngLat: [number, number] = [item.longitude, item.latitude];
       const headline = getLoreHeadline(item);
+      const isSelected = selectedPinKey === id;
 
       const existing = loreMarkersRef.current.get(id);
       if (existing) {
         existing.setLngLat(lngLat);
+        existing.getElement().classList.toggle("lore-map-pin--selected", isSelected);
         return;
       }
 
-      const element = createLorePinElement(headline);
+      const element = createLorePinElement(headline, {
+        selected: isSelected,
+        onClick: () => handlePinSelect(item, id),
+      });
       const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
         .setLngLat(lngLat)
-        .setPopup(
-          new mapboxgl.Popup({ offset: 16, maxWidth: "320px" }).setHTML(
-            buildLorePopupHtml(item),
-          ),
-        )
         .addTo(map);
 
       loreMarkersRef.current.set(id, marker);
     });
-  }, [plottableItems]);
+  }, [plottableItems, selectedPinKey, handlePinSelect]);
 
   useEffect(() => {
-    if (isLoading || plottableItems.length === 0 || hasFitBoundsRef.current) {
+    const map = mapRef.current;
+    if (!map || !selectedPinItem) {
+      cardMarkerRef.current?.remove();
+      cardMarkerRef.current = null;
+      setCardMountEl(null);
+      return;
+    }
+
+    cardMarkerRef.current?.remove();
+
+    const mountEl = document.createElement("div");
+    mountEl.className = "lore-story-card-marker";
+
+    const marker = new mapboxgl.Marker({
+      element: mountEl,
+      anchor: "bottom",
+      offset: LORE_CARD_MARKER_OFFSET,
+    })
+      .setLngLat([selectedPinItem.longitude, selectedPinItem.latitude])
+      .addTo(map);
+
+    cardMarkerRef.current = marker;
+    setCardMountEl(mountEl);
+
+    return () => {
+      marker.remove();
+      if (cardMarkerRef.current === marker) {
+        cardMarkerRef.current = null;
+      }
+      setCardMountEl(null);
+    };
+  }, [selectedPinItem]);
+
+  useEffect(() => {
+    if (
+      isLoading ||
+      !activeSearch ||
+      plottableItems.length === 0 ||
+      hasFitBoundsRef.current
+    ) {
       return;
     }
 
@@ -294,40 +499,60 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
     }
 
     const bounds = new mapboxgl.LngLatBounds();
-    bounds.extend([location.longitude, location.latitude]);
+    bounds.extend([activeSearch.longitude, activeSearch.latitude]);
     for (const item of plottableItems) {
       bounds.extend([item.longitude, item.latitude]);
     }
 
     map.fitBounds(bounds, { padding: 72, maxZoom: 15, duration: 800 });
     hasFitBoundsRef.current = true;
-  }, [isLoading, plottableItems, location.latitude, location.longitude]);
+  }, [isLoading, plottableItems, activeSearch]);
 
   const showStatusPanel = isLoading || error != null;
+  const searchHereDisabled = isLoading || isSearchingHere;
+  const searchHereText = isSearchingHere
+    ? "Locating…"
+    : mapCenterAreaLabel
+      ? `Search ${mapCenterAreaLabel}`
+      : "Search here";
 
   return (
     <div className="fixed inset-0 z-50 bg-stone-900">
-      <div ref={containerRef} className="h-full w-full" aria-label="Map" />
-
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center p-4 sm:p-6">
-        <div className="pointer-events-auto rounded-xl bg-white/95 px-5 py-3 text-center shadow-lg backdrop-blur-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-amber-800">
-            Exploring
-          </p>
-          <h1 className="mt-1 text-lg font-semibold text-zinc-900">
-            {location.label}
-          </h1>
-          {plottableItems.length > 0 ? (
-            <p className="mt-1 text-xs text-zinc-500">
-              {plottableItems.length} stor
-              {plottableItems.length === 1 ? "y" : "ies"} on the map — tap a pin
-              for details
-            </p>
+      <div className="relative h-full w-full">
+        <div ref={containerRef} className="h-full w-full" aria-label="Map" />
+        <div
+          className={`map-viewport-crosshair${isMapMoving ? " map-viewport-crosshair--moving" : ""}${isLoading ? " map-viewport-crosshair--loading" : ""}`}
+          aria-hidden
+        >
+          <span className="map-viewport-crosshair__dot" />
+          {crosshairPulseKey > 0 ? (
+            <span
+              key={crosshairPulseKey}
+              className="map-viewport-crosshair__pulse"
+            />
           ) : null}
         </div>
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 p-4 sm:p-6">
+      {cardMountEl && selectedPinItem
+        ? createPortal(
+            <LoreStoryCard item={selectedPinItem} onClose={handleCloseCard} />,
+            cardMountEl,
+          )
+        : null}
+
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center p-3 sm:p-4">
+        <div className="pointer-events-auto rounded-lg bg-white/95 px-3 py-1.5 text-center shadow-md backdrop-blur-sm">
+          <p className="font-lore text-xl leading-none text-amber-900 sm:text-2xl">
+            Local Lore
+          </p>
+          <p className="mt-0.5 text-[0.65rem] text-zinc-500 sm:text-xs">
+            AI-powered local history explorer
+          </p>
+        </div>
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col items-center gap-3 p-4 sm:p-6">
         {showStatusPanel ? (
           <LoreResultsPanel
             pinCount={plottableItems.length}
@@ -337,17 +562,41 @@ export function ExploreMap({ location, onSearchAgain }: ExploreMapProps) {
             progressPercent={progressPercent}
             jobStatus={jobStatus}
             stageMessage={stageMessage}
-            onRetry={() => void requestLore()}
+            onRetry={() => {
+              if (activeSearch) {
+                submittedForId.current = null;
+                void requestLore(activeSearch);
+              }
+            }}
           />
         ) : null}
 
         <button
           type="button"
-          onClick={onSearchAgain}
-          className="pointer-events-auto rounded-xl border border-white/20 bg-zinc-900/80 px-6 py-3 text-sm font-medium text-white shadow-lg backdrop-blur-sm transition hover:bg-zinc-800"
+          onClick={() => void handleSearchHere()}
+          disabled={searchHereDisabled}
+          className="search-here-btn pointer-events-auto cursor-pointer whitespace-nowrap rounded-xl bg-amber-600 px-8 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          New search
+          {crosshairPulseKey > 0 && !searchHereDisabled ? (
+            <span
+              key={crosshairPulseKey}
+              className="search-here-btn__pulse"
+              aria-hidden
+            />
+          ) : null}
+          {!isSearchingHere ? (
+            <SearchPinIcon className="h-4 w-4 shrink-0 text-sky-100 drop-shadow-sm" />
+          ) : null}
+          <span>{searchHereText}</span>
         </button>
+
+        <div className="pointer-events-auto w-full max-w-lg">
+          <LocationSearch variant="map" mode="center" onCenterMap={handleCenterMap} />
+        </div>
+
+        <p className="text-center text-xs text-zinc-400">
+          Search by OpenStreetMap · Map by Mapbox
+        </p>
       </div>
     </div>
   );
