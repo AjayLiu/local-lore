@@ -17,7 +17,7 @@ When you select a location, the app **enqueues** a background job instead of cal
 
 There is **no geographic cache** yet (Supabase PostGIS is planned for a later milestone).
 
-**API quota:** The free tier for `gemini-3.5-flash` is very low (~20 requests/day). The app defaults to `gemini-2.5-flash`. Override with `LORE_MODEL_ID` in `.env.local` if needed.
+**API quota:** Each location search uses **one** Gemini `generateText` call (Wikipedia is fetched separately, no AI). Default model is `gemini-3.1-flash-lite`. Override with `LORE_MODEL_ID` in `.env.local` if needed.
 
 ## Prerequisites
 

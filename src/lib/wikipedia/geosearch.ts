@@ -1,6 +1,9 @@
+import { balanceArticlesForLore, isNotableMonumentArticle } from "./monuments";
 import {
   DEFAULT_GESEARCH_LIMIT,
   DEFAULT_GESEARCH_RADIUS_METERS,
+  LORE_ARTICLE_POOL_SIZE,
+  LORE_MIN_NOTABLE_MONUMENTS_IN_POOL,
 } from "./constants";
 import { wikipediaFetch } from "./client";
 
@@ -12,6 +15,8 @@ export type WikipediaArticle = {
   extract: string;
   wikipediaUrl: string;
   distanceMeters?: number;
+  /** True for geotagged statues, monuments, and memorials. */
+  isNotableMonument?: boolean;
 };
 
 type WikipediaPage = {
@@ -19,6 +24,7 @@ type WikipediaPage = {
   title: string;
   extract?: string;
   coordinates?: Array<{ lat: number; lon: number }>;
+  categories?: Array<{ title: string }>;
   dist?: number;
 };
 
@@ -52,7 +58,9 @@ export async function fetchNearbyWikipediaArticles(options: {
     ggscoord: `${latitude}|${longitude}`,
     ggsradius: String(radiusMeters),
     ggslimit: String(limit),
-    prop: "extracts|coordinates",
+    ggsprimary: "all",
+    prop: "extracts|coordinates|categories",
+    cllimit: "max",
     exintro: "1",
     explaintext: "1",
     exchars: "600",
@@ -71,6 +79,13 @@ export async function fetchNearbyWikipediaArticles(options: {
       continue;
     }
 
+    const categoryTitles =
+      page.categories?.map((category) => category.title) ?? [];
+    const isNotableMonument = isNotableMonumentArticle({
+      title: page.title,
+      categories: categoryTitles,
+    });
+
     articles.push({
       pageId: page.pageid,
       title: page.title,
@@ -79,10 +94,16 @@ export async function fetchNearbyWikipediaArticles(options: {
       extract: page.extract.trim(),
       wikipediaUrl: buildWikipediaUrl(page.title),
       ...(page.dist != null ? { distanceMeters: page.dist } : {}),
+      ...(isNotableMonument ? { isNotableMonument: true } : {}),
     });
   }
 
-  return articles.sort(
+  const sorted = articles.sort(
     (a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0),
   );
+
+  return balanceArticlesForLore(sorted, {
+    maxPool: LORE_ARTICLE_POOL_SIZE,
+    minNotableMonuments: LORE_MIN_NOTABLE_MONUMENTS_IN_POOL,
+  });
 }

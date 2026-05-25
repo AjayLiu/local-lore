@@ -1,7 +1,4 @@
-import {
-  fetchLoreArticles,
-  generateLoreSynthesis,
-} from "@/lib/lore/agent";
+import { runLoreForLocation } from "@/lib/lore/agent";
 import { formatLoreApiError } from "@/lib/lore/errors";
 import {
   getLoreJob,
@@ -65,44 +62,30 @@ export async function POST(req: Request) {
     return Response.json({ ok: true, status: "failed" });
   }
 
-  let articles;
   try {
-    articles = await fetchLoreArticles({
+    const items = await runLoreForLocation({
       latitude: job.latitude,
       longitude: job.longitude,
-    });
-  } catch (error) {
-    console.error("Wikipedia fetch failed:", error);
-    await updateLoreJobStatus(jobId, {
-      status: "failed",
-      error: "Failed to fetch Wikipedia articles",
-    });
-    return Response.json(
-      { error: "Failed to fetch Wikipedia articles" },
-      { status: 500 },
-    );
-  }
-
-  if (articles.length === 0) {
-    await updateLoreJobStatus(jobId, {
-      status: "failed",
-      error: "No nearby Wikipedia articles found",
-    });
-    return Response.json({ error: "No nearby Wikipedia articles found" }, {
-      status: 404,
-    });
-  }
-
-  try {
-    const items = await generateLoreSynthesis({
       label: job.label,
-      articles,
     });
 
     await updateLoreJobStatus(jobId, { status: "complete", items });
     return Response.json({ ok: true, status: "complete" });
   } catch (error) {
-    console.error("Lore synthesis failed:", error);
+    if (
+      error instanceof Error &&
+      error.message === "NO_NEARBY_ARTICLES"
+    ) {
+      await updateLoreJobStatus(jobId, {
+        status: "failed",
+        error: "No nearby Wikipedia articles found",
+      });
+      return Response.json({ error: "No nearby Wikipedia articles found" }, {
+        status: 404,
+      });
+    }
+
+    console.error("Lore pipeline failed:", error);
     const { message, status } = formatLoreApiError(error);
     await updateLoreJobStatus(jobId, { status: "failed", error: message });
     return Response.json({ error: message }, { status });

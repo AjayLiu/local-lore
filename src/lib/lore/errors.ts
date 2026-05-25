@@ -25,8 +25,8 @@ export function formatLoreApiError(error: unknown): {
     return {
       status: 429,
       message:
-        "Gemini API quota exceeded (free tier is ~20 requests/day for gemini-3.5-flash). " +
-        "Wait and retry, set LORE_MODEL_ID=gemini-2.5-flash in .env.local, or enable billing in Google AI Studio.",
+        "Gemini API quota exceeded. Each location search uses one AI request. " +
+        "Wait and retry, or enable billing in Google AI Studio.",
     };
   }
 

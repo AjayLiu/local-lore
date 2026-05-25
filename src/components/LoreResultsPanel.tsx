@@ -24,7 +24,7 @@ function formatLoreError(message: string): string {
   ) {
     return (
       "Gemini API quota exceeded. Each search uses one AI request. " +
-      "Wait and try again, or set LORE_MODEL_ID=gemini-2.5-flash in .env.local."
+      "Wait and try again, or enable billing in Google AI Studio."
     );
   }
 
