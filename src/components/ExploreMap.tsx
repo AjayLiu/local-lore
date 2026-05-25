@@ -49,11 +49,15 @@ function SearchPinIcon({ className }: { className?: string }) {
 
 type ExploreMapProps = {
   initialCenter: MapCenter;
+  /** When set (after the user grants geolocation), fly the map to their position. */
+  userCenter?: MapCenter | null;
 };
 
-export function ExploreMap({ initialCenter }: ExploreMapProps) {
+export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
+  const userCenterRef = useRef(userCenter ?? null);
+  userCenterRef.current = userCenter ?? null;
   const loreMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const cardMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const hasFitBoundsRef = useRef(false);
@@ -326,6 +330,22 @@ export function ExploreMap({ initialCenter }: ExploreMapProps) {
     map.on("moveend", scheduleResolveMapCenterLabel);
     scheduleResolveMapCenterLabel();
 
+    const pendingUserCenter = userCenterRef.current;
+    if (pendingUserCenter) {
+      const centerOnUser = () => {
+        map.flyTo({
+          center: [pendingUserCenter.longitude, pendingUserCenter.latitude],
+          zoom: DEFAULT_MAP_ZOOM,
+          duration: 1200,
+        });
+      };
+      if (map.loaded()) {
+        centerOnUser();
+      } else {
+        map.once("load", centerOnUser);
+      }
+    }
+
     return () => {
       if (debounceTimer) {
         clearTimeout(debounceTimer);
@@ -360,6 +380,28 @@ export function ExploreMap({ initialCenter }: ExploreMapProps) {
     },
     [],
   );
+
+  useEffect(() => {
+    const center = userCenterRef.current;
+    if (!center) {
+      return;
+    }
+
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    const centerOnUser = () => {
+      handleCenterMap(center);
+    };
+
+    if (map.loaded()) {
+      centerOnUser();
+    } else {
+      map.once("load", centerOnUser);
+    }
+  }, [userCenter, handleCenterMap]);
 
   const handleSearchHere = useCallback(async () => {
     const map = mapRef.current;

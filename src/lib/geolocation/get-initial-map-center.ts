@@ -7,29 +7,48 @@ export type MapCenter = {
   longitude: number;
 };
 
-export function getInitialMapCenter(): Promise<MapCenter> {
+/** Default map center before geolocation resolves or if the user declines. */
+export function getDefaultMapCenter(): MapCenter {
+  return LOS_ANGELES_CENTER;
+}
+
+/** Resolves with the user's coordinates only when permission is granted. */
+export function tryGetUserMapCenter(): Promise<MapCenter | null> {
   if (typeof navigator === "undefined" || !navigator.geolocation) {
-    return Promise.resolve(LOS_ANGELES_CENTER);
+    return Promise.resolve(null);
   }
 
   return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = (center: MapCenter | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timeoutId);
+      resolve(center);
+    };
+
     const timeoutId = window.setTimeout(() => {
-      resolve(LOS_ANGELES_CENTER);
+      finish(null);
     }, GEOLOCATION_TIMEOUT_MS);
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        window.clearTimeout(timeoutId);
-        resolve({
+        finish({
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
         });
       },
       () => {
-        window.clearTimeout(timeoutId);
-        resolve(LOS_ANGELES_CENTER);
+        finish(null);
       },
-      { enableHighAccuracy: false, maximumAge: 60_000, timeout: GEOLOCATION_TIMEOUT_MS },
+      {
+        enableHighAccuracy: false,
+        maximumAge: 60_000,
+        timeout: GEOLOCATION_TIMEOUT_MS,
+      },
     );
   });
 }
