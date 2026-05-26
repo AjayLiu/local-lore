@@ -123,6 +123,8 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
   >(null);
   const [stageMessage, setStageMessage] = useState<string | null>(null);
   const [selectedPinKey, setSelectedPinKey] = useState<string | null>(null);
+  const [selectedCardItem, setSelectedCardItem] =
+    useState<PlottableLoreItem | null>(null);
   const [cardMountEl, setCardMountEl] = useState<HTMLDivElement | null>(null);
   const [cachedPins, setCachedPins] = useState<CachedLorePin[]>([]);
   const [recentSearchesRefreshKey, setRecentSearchesRefreshKey] = useState(0);
@@ -161,28 +163,6 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
     [cachedPins, hiddenCachedPageIds],
   );
 
-  const selectedPinItem = useMemo((): PlottableLoreItem | null => {
-    if (!selectedPinKey) {
-      return null;
-    }
-
-    const activeIndex = plottableItems.findIndex(
-      (item, i) => getLoreItemKey(item, i) === selectedPinKey,
-    );
-    if (activeIndex >= 0) {
-      return plottableItems[activeIndex] ?? null;
-    }
-
-    const cached = cachedPins.find(
-      (pin) => String(pin.pageId) === selectedPinKey,
-    );
-    if (!cached) {
-      return null;
-    }
-
-    return cachedPinToLoreItem(cached);
-  }, [selectedPinKey, plottableItems, cachedPins]);
-
   const requestLore = useCallback(async (search: SelectedLocation) => {
     pollAbortRef.current?.abort();
     pollAbortRef.current = null;
@@ -195,6 +175,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
     setJobStatus(null);
     setStageMessage(null);
     setSelectedPinKey(null);
+    setSelectedCardItem(null);
     hasFitBoundsRef.current = false;
 
     try {
@@ -402,8 +383,10 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
 
   const handleCachedPinSelect = useCallback(
     (pin: CachedLorePin) => {
+      const item = cachedPinToLoreItem(pin);
       setSelectedPinKey(String(pin.pageId));
-      centerMapOnPin(cachedPinToLoreItem(pin));
+      setSelectedCardItem(item);
+      centerMapOnPin(item);
     },
     [centerMapOnPin],
   );
@@ -599,6 +582,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       setJobStatus(null);
       setStageMessage(null);
       setSelectedPinKey(null);
+      setSelectedCardItem(null);
       hasFitBoundsRef.current = false;
 
       const onIdle = () => {
@@ -660,6 +644,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
   const handlePinSelect = useCallback(
     (item: PlottableLoreItem, pinKey: string) => {
       setSelectedPinKey(pinKey);
+      setSelectedCardItem(item);
       centerMapOnPin(item);
     },
     [centerMapOnPin],
@@ -667,6 +652,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
 
   const handleCloseCard = useCallback(() => {
     setSelectedPinKey(null);
+    setSelectedCardItem(null);
   }, []);
 
   const syncMapPins = useCallback(() => {
@@ -852,16 +838,18 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
     syncMapPins();
   }, [syncMapPins]);
 
+  // Mount once per selection; card content comes from selectedCardItem snapshot
+  // so viewport cache refetches cannot unmount the portal or move the marker.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !selectedPinItem) {
+    if (!map || !selectedPinKey || !selectedCardItem) {
       cardMarkerRef.current?.remove();
       cardMarkerRef.current = null;
       setCardMountEl(null);
       return;
     }
 
-    cardMarkerRef.current?.remove();
+    const { longitude, latitude } = selectedCardItem;
 
     const mountEl = document.createElement("div");
     mountEl.className = "lore-story-card-marker";
@@ -871,7 +859,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       anchor: "bottom",
       offset: LORE_CARD_MARKER_OFFSET,
     })
-      .setLngLat([selectedPinItem.longitude, selectedPinItem.latitude])
+      .setLngLat([longitude, latitude])
       .addTo(map);
 
     cardMarkerRef.current = marker;
@@ -884,7 +872,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       }
       setCardMountEl(null);
     };
-  }, [selectedPinItem]);
+  }, [selectedPinKey]);
 
   useEffect(() => {
     if (
@@ -937,9 +925,9 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
         </div>
       </div>
 
-      {cardMountEl && selectedPinItem
+      {cardMountEl && selectedCardItem
         ? createPortal(
-          <LoreStoryCard item={selectedPinItem} onClose={handleCloseCard} />,
+          <LoreStoryCard item={selectedCardItem} onClose={handleCloseCard} />,
           cardMountEl,
         )
         : null}
