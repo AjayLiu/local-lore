@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import { createPortal } from "react-dom";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
@@ -25,6 +32,11 @@ import {
 } from "@/lib/lore/cached-pin";
 import { cachedLoreResponseSchema } from "@/lib/lore/cached-pin-response";
 import {
+  clusterPinsForMap,
+  LORE_PIN_CLUSTER_MAX_ZOOM,
+} from "@/lib/mapbox/pin-clustering";
+import {
+  createLoreClusterElement,
   createLorePinElement,
   LORE_PIN_HEADLINE_MIN_ZOOM,
   setLorePinHeadlineVisible,
@@ -75,6 +87,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
   userCenterRef.current = userCenter ?? null;
   const loreMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const cachedMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
+  const clusterMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const cardMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const hasFitBoundsRef = useRef(false);
   const submittedForId = useRef<string | null>(null);
@@ -83,19 +96,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
   const mapReadyRef = useRef(false);
   const fetchCachedInViewportRef = useRef<() => Promise<void>>(async () => { });
   const activePageIdsRef = useRef<ReadonlySet<number>>(new Set());
-  const syncPinHeadlinesForZoomRef = useRef<(zoom: number) => void>(() => { });
-
-  const syncPinHeadlinesForZoom = useCallback((zoom: number) => {
-    const showHeadlines = zoom >= LORE_PIN_HEADLINE_MIN_ZOOM;
-    for (const marker of loreMarkersRef.current.values()) {
-      setLorePinHeadlineVisible(marker.getElement(), showHeadlines);
-    }
-    for (const marker of cachedMarkersRef.current.values()) {
-      setLorePinHeadlineVisible(marker.getElement(), showHeadlines);
-    }
-  }, []);
-
-  syncPinHeadlinesForZoomRef.current = syncPinHeadlinesForZoom;
+  const syncMapPinsRef = useRef<() => void>(() => { });
 
   const [activeSearch, setActiveSearch] = useState<SelectedLocation | null>(
     null,
@@ -499,7 +500,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
     }
 
     const syncMapZoom = () => {
-      syncPinHeadlinesForZoomRef.current(map.getZoom());
+      syncMapPinsRef.current();
     };
 
     map.on("movestart", handleMapInteractionStart);
@@ -552,6 +553,10 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
         marker.remove();
       }
       cachedMarkersRef.current.clear();
+      for (const marker of clusterMarkersRef.current.values()) {
+        marker.remove();
+      }
+      clusterMarkersRef.current.clear();
       cardMarkerRef.current?.remove();
       cardMarkerRef.current = null;
       map.remove();
@@ -664,102 +669,188 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
     setSelectedPinKey(null);
   }, []);
 
-  useEffect(() => {
+  const syncMapPins = useCallback(() => {
     const map = mapRef.current;
     if (!map) {
       return;
     }
 
-    const nextIds = new Set(
-      plottableItems.map((item, index) => getLoreItemKey(item, index)),
-    );
+    type PinDescriptor = {
+      id: string;
+      lngLat: [number, number];
+      headline: string;
+      selected: boolean;
+      onClick: () => void;
+      source: "lore" | "cached";
+    };
 
-    for (const [id, marker] of loreMarkersRef.current) {
-      if (!nextIds.has(id)) {
-        marker.remove();
-        loreMarkersRef.current.delete(id);
-      }
-    }
+    const allPins: PinDescriptor[] = [];
 
     plottableItems.forEach((item, index) => {
       const id = getLoreItemKey(item, index);
-      const lngLat: [number, number] = [item.longitude, item.latitude];
-      const headline = getLoreHeadline(item);
-      const isSelected = selectedPinKey === id;
-
-      const existing = loreMarkersRef.current.get(id);
-      if (existing) {
-        existing.setLngLat(lngLat);
-        existing.getElement().classList.toggle("lore-map-pin--selected", isSelected);
-        return;
-      }
-
-      const element = createLorePinElement(headline, {
-        selected: isSelected,
+      allPins.push({
+        id,
+        lngLat: [item.longitude, item.latitude],
+        headline: getLoreHeadline(item),
+        selected: selectedPinKey === id,
         onClick: () => handlePinSelect(item, id),
+        source: "lore",
       });
-      setLorePinHeadlineVisible(
-        element,
-        map.getZoom() >= LORE_PIN_HEADLINE_MIN_ZOOM,
-      );
-      const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
-        .setLngLat(lngLat)
-        .addTo(map);
-
-      loreMarkersRef.current.set(id, marker);
     });
-  }, [plottableItems, selectedPinKey, handlePinSelect]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) {
-      return;
-    }
-
-    const nextIds = new Set(
-      displayCachedPins.map((pin) => String(pin.pageId)),
-    );
-
-    for (const [id, marker] of cachedMarkersRef.current) {
-      if (!nextIds.has(id)) {
-        marker.remove();
-        cachedMarkersRef.current.delete(id);
-      }
-    }
 
     for (const pin of displayCachedPins) {
       const id = String(pin.pageId);
-      const lngLat: [number, number] = [pin.longitude, pin.latitude];
-      const headline = pin.headline;
-      const isSelected = selectedPinKey === id;
+      allPins.push({
+        id,
+        lngLat: [pin.longitude, pin.latitude],
+        headline: pin.headline,
+        selected: selectedPinKey === id,
+        onClick: () => handleCachedPinSelect(pin),
+        source: "cached",
+      });
+    }
 
-      const existing = cachedMarkersRef.current.get(id);
+    const pinById = new Map(allPins.map((pin) => [pin.id, pin]));
+    const lorePinIds = new Set(
+      allPins.filter((pin) => pin.source === "lore").map((pin) => pin.id),
+    );
+    const cachedPinIds = new Set(
+      allPins.filter((pin) => pin.source === "cached").map((pin) => pin.id),
+    );
+
+    const zoom = map.getZoom();
+    const showHeadlines = zoom >= LORE_PIN_HEADLINE_MIN_ZOOM;
+    const clustering = zoom < LORE_PIN_CLUSTER_MAX_ZOOM;
+
+    const upsertPinMarker = (
+      markersRef: MutableRefObject<Map<string, mapboxgl.Marker>>,
+      pin: PinDescriptor,
+    ) => {
+      const existing = markersRef.current.get(pin.id);
       if (existing) {
-        existing.setLngLat(lngLat);
+        existing.setLngLat(pin.lngLat);
         const element = existing.getElement();
-        element.classList.toggle("lore-map-pin--selected", isSelected);
+        element.classList.toggle("lore-map-pin--selected", pin.selected);
         const label = element.querySelector(".lore-map-pin__label");
         if (label) {
-          label.textContent = truncateHeadline(headline);
+          label.textContent = truncateHeadline(pin.headline);
+        }
+        setLorePinHeadlineVisible(element, showHeadlines);
+        return;
+      }
+
+      const element = createLorePinElement(pin.headline, {
+        selected: pin.selected,
+        onClick: pin.onClick,
+      });
+      setLorePinHeadlineVisible(element, showHeadlines);
+      const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
+        .setLngLat(pin.lngLat)
+        .addTo(map);
+      markersRef.current.set(pin.id, marker);
+    };
+
+    const removeStaleMarkers = (
+      markersRef: MutableRefObject<Map<string, mapboxgl.Marker>>,
+      keepIds: ReadonlySet<string>,
+    ) => {
+      for (const [id, marker] of markersRef.current) {
+        if (!keepIds.has(id)) {
+          marker.remove();
+          markersRef.current.delete(id);
+        }
+      }
+    };
+
+    if (!clustering) {
+      for (const [id, marker] of clusterMarkersRef.current) {
+        marker.remove();
+        clusterMarkersRef.current.delete(id);
+      }
+
+      removeStaleMarkers(loreMarkersRef, lorePinIds);
+      removeStaleMarkers(cachedMarkersRef, cachedPinIds);
+
+      for (const pin of allPins) {
+        const markersRef =
+          pin.source === "lore" ? loreMarkersRef : cachedMarkersRef;
+        upsertPinMarker(markersRef, pin);
+      }
+      return;
+    }
+
+    const clustered = clusterPinsForMap(allPins, map);
+    const visiblePinIds = new Set(
+      clustered
+        .filter((entry) => entry.kind === "pin")
+        .map((entry) => entry.id),
+    );
+    const clusterEntries = clustered.filter((entry) => entry.kind === "cluster");
+
+    removeStaleMarkers(loreMarkersRef, visiblePinIds);
+    removeStaleMarkers(cachedMarkersRef, visiblePinIds);
+
+    for (const pinId of visiblePinIds) {
+      const pin = pinById.get(pinId);
+      if (!pin) {
+        continue;
+      }
+      const markersRef =
+        pin.source === "lore" ? loreMarkersRef : cachedMarkersRef;
+      upsertPinMarker(markersRef, pin);
+    }
+
+    const nextClusterIds = new Set(clusterEntries.map((entry) => entry.id));
+    for (const [id, marker] of clusterMarkersRef.current) {
+      if (!nextClusterIds.has(id)) {
+        marker.remove();
+        clusterMarkersRef.current.delete(id);
+      }
+    }
+
+    for (const cluster of clusterEntries) {
+      if (cluster.kind !== "cluster") {
+        continue;
+      }
+
+      const existing = clusterMarkersRef.current.get(cluster.id);
+      if (existing) {
+        existing.setLngLat(cluster.lngLat);
+        const countEl = existing
+          .getElement()
+          .querySelector(".lore-map-cluster__count");
+        if (countEl) {
+          countEl.textContent = String(cluster.count);
         }
         continue;
       }
 
-      const element = createLorePinElement(headline, {
-        selected: isSelected,
-        onClick: () => handleCachedPinSelect(pin),
+      const element = createLoreClusterElement(cluster.count, {
+        onClick: () => {
+          map.flyTo({
+            center: cluster.lngLat,
+            zoom: Math.max(map.getZoom() + 2, LORE_PIN_CLUSTER_MAX_ZOOM),
+            duration: 700,
+          });
+        },
       });
-      setLorePinHeadlineVisible(
-        element,
-        map.getZoom() >= LORE_PIN_HEADLINE_MIN_ZOOM,
-      );
-      const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
-        .setLngLat(lngLat)
+      const marker = new mapboxgl.Marker({ element, anchor: "center" })
+        .setLngLat(cluster.lngLat)
         .addTo(map);
-
-      cachedMarkersRef.current.set(id, marker);
+      clusterMarkersRef.current.set(cluster.id, marker);
     }
-  }, [displayCachedPins, selectedPinKey, handleCachedPinSelect]);
+  }, [
+    plottableItems,
+    displayCachedPins,
+    selectedPinKey,
+    handlePinSelect,
+    handleCachedPinSelect,
+  ]);
+
+  useEffect(() => {
+    syncMapPinsRef.current = syncMapPins;
+    syncMapPins();
+  }, [syncMapPins]);
 
   useEffect(() => {
     const map = mapRef.current;

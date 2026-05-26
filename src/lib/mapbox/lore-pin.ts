@@ -48,6 +48,29 @@ export function setLorePinHeadlineVisible(
   element.classList.toggle("lore-map-pin--compact", !visible);
 }
 
+export function createLoreClusterElement(
+  count: number,
+  options?: { onClick?: () => void },
+): HTMLDivElement {
+  const root = document.createElement("div");
+  root.className = "lore-map-cluster";
+
+  const label = document.createElement("span");
+  label.className = "lore-map-cluster__count";
+  label.textContent = String(count);
+
+  root.append(label);
+
+  if (options?.onClick) {
+    root.addEventListener("click", (event) => {
+      event.stopPropagation();
+      options.onClick?.();
+    });
+  }
+
+  return root;
+}
+
 export function buildLorePopupHtml(item: {
   headline?: string;
   title?: string;

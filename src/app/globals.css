@@ -85,6 +85,28 @@ body {
   background: #dc2626;
 }
 
+.lore-map-cluster {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  padding: 0 0.4rem;
+  border: 2px solid #fff;
+  border-radius: 9999px;
+  background: #b45309;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.28);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.lore-map-cluster__count {
+  color: #fff;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .map-viewport-crosshair {
   position: absolute;
   left: 50%;
