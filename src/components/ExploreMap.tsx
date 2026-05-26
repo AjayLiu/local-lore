@@ -25,7 +25,15 @@ import {
   reverseGeocode,
 } from "@/lib/photon/search";
 import { getMapboxAccessToken } from "@/lib/mapbox/access-token";
-import { DEFAULT_MAP_ZOOM } from "@/lib/mapbox/constants";
+import {
+  getCachedPinFetchBbox,
+  getCachedPinPruneBbox,
+  mergeCachedPinsForViewport,
+} from "@/lib/mapbox/cached-pin-bounds";
+import {
+  getZoomForMap,
+  getZoomForViewportWidth,
+} from "@/lib/mapbox/viewport-zoom";
 import {
   cachedPinToLoreItem,
   type CachedLorePin,
@@ -341,16 +349,16 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       return;
     }
 
-    const bounds = map.getBounds();
-    if (!bounds) {
+    const fetchBbox = getCachedPinFetchBbox(map);
+    if (!fetchBbox) {
       return;
     }
 
     const params = new URLSearchParams({
-      west: String(bounds.getWest()),
-      south: String(bounds.getSouth()),
-      east: String(bounds.getEast()),
-      north: String(bounds.getNorth()),
+      west: String(fetchBbox.west),
+      south: String(fetchBbox.south),
+      east: String(fetchBbox.east),
+      north: String(fetchBbox.north),
     });
 
     const generation = ++cachedFetchGenerationRef.current;
@@ -372,7 +380,22 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
         return;
       }
 
-      setCachedPins(parsed.data.items);
+      const mapNow = mapRef.current;
+      const pruneBbox =
+        mapNow && generation === cachedFetchGenerationRef.current
+          ? getCachedPinPruneBbox(mapNow)
+          : null;
+
+      setCachedPins((previous) => {
+        if (!pruneBbox) {
+          return parsed.data.items;
+        }
+        return mergeCachedPinsForViewport(
+          previous,
+          parsed.data.items,
+          pruneBbox,
+        );
+      });
     } catch {
       // Cached pins are optional; ignore fetch errors.
     }
@@ -403,7 +426,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       container,
       style: "mapbox://styles/mapbox/streets-v12",
       center: [initialCenter.longitude, initialCenter.latitude],
-      zoom: DEFAULT_MAP_ZOOM,
+      zoom: getZoomForViewportWidth(container.clientWidth),
     });
 
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
@@ -492,6 +515,8 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
     map.on("moveend", syncMapZoom);
     map.on("zoom", syncMapZoom);
     map.on("zoomend", scheduleCachedFetch);
+    map.on("resize", scheduleCachedFetch);
+    map.on("resize", syncMapZoom);
     scheduleResolveMapCenterLabel();
     syncMapZoom();
 
@@ -500,7 +525,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       const centerOnUser = () => {
         map.flyTo({
           center: [pendingUserCenter.longitude, pendingUserCenter.latitude],
-          zoom: DEFAULT_MAP_ZOOM,
+          zoom: getZoomForMap(map),
           duration: 1200,
         });
       };
@@ -526,6 +551,8 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       map.off("moveend", syncMapZoom);
       map.off("zoom", syncMapZoom);
       map.off("zoomend", scheduleCachedFetch);
+      map.off("resize", scheduleCachedFetch);
+      map.off("resize", syncMapZoom);
       resolveCenterGenerationRef.current += 1;
       const loreMarkers = loreMarkersRef.current;
       for (const marker of loreMarkers.values()) {
@@ -556,7 +583,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
 
       map.flyTo({
         center: [coords.longitude, coords.latitude],
-        zoom: DEFAULT_MAP_ZOOM,
+        zoom: getZoomForMap(map),
         duration: 1200,
       });
     },
@@ -593,7 +620,7 @@ export function ExploreMap({ initialCenter, userCenter }: ExploreMapProps) {
       map.once("idle", onIdle);
       map.flyTo({
         center: [entry.longitude, entry.latitude],
-        zoom: DEFAULT_MAP_ZOOM,
+        zoom: getZoomForMap(map),
         duration: 1200,
       });
     },
