@@ -17,7 +17,7 @@ When you select a location, the app **enqueues** a background job instead of cal
 
 Completed lore jobs are **persisted to Supabase** (one row per Wikipedia `page_id`). The map loads cached cards in the current viewport as small dots; zoom in to see headlines (zoom ≥ 14). Supabase is optional for local dev without env vars.
 
-**API quota:** Each location search uses **one** Gemini `generateText` call (Wikipedia is fetched separately, no AI). Models in `LORE_MODEL_ID` and `LORE_MODEL_FALLBACK_IDS` (defaults: `gemini-3.1-flash-lite`, then `gemini-2.5-flash`, then `gemini-2.5-flash-lite`) are **round-robined** per search. On **503 / high demand**, the worker retries with backoff, then tries fallbacks in that order, and leaves the job in `processing` so QStash can redeliver instead of marking it failed immediately.
+**API quota:** Each location search uses **one** Gemini `generateText` call (Wikipedia is fetched separately, no AI) on `LORE_MODEL_ID` (default `gemini-3.1-flash-lite`). On **429 / rate limit**, the job stays on that model and QStash retries later. On **503 / high demand**, the worker retries with backoff, then tries `LORE_MODEL_FALLBACK_IDS` in order (`gemini-2.5-flash`, then `gemini-2.5-flash-lite` by default). **403** errors fail immediately (check API key / billing).
 
 ## Prerequisites
 
@@ -55,9 +55,9 @@ Completed lore jobs are **persisted to Supabase** (one row per Wikipedia `page_i
 ### Supabase geographic cache
 
 1. Create a Supabase project and enable the **PostGIS** extension (Database → Extensions).
-2. Run the SQL migrations in [`supabase/migrations/`](supabase/migrations/) in order in the SQL editor (`001_lore_cards.sql` for cached cards; `002_lore_searches.sql` for community search counts shown on the map).
+2. Run the SQL migrations in [`supabase/migrations/`](supabase/migrations/) in order in the SQL editor (`001_lore_cards.sql` for cached cards; `002_lore_searches.sql` for community search counts; `003_lore_gemini_logs.sql` for Gemini failure/fallback logs).
 3. Add `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (service role, server-only) to `.env.local` and Vercel.
-4. After a lore search completes, rows appear in `lore_cards`. Pan the map to load cached pins via `GET /api/lore/cached?west=&south=&east=&north=`.
+4. After a lore search completes, rows appear in `lore_cards`. Pan the map to load cached pins via `GET /api/lore/cached?west=&south=&east=&north=`. When `gemini-3.1-flash-lite` fails or a fallback runs, rows are appended to `lore_gemini_logs` (query in the Supabase SQL editor or Table Editor).
 
 Re-searching the same Wikipedia article **updates** the existing row (`page_id` is unique), it does not duplicate.
 

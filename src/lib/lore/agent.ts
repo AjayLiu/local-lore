@@ -8,8 +8,14 @@ import {
   fetchNearbyWikipediaArticles,
   type FetchNearbyArticlesProgress,
 } from "@/lib/wikipedia/geosearch";
-import { isGeminiTransientError } from "./errors";
-import { pickLoreModelChain } from "./model";
+import { isGeminiModelFallbackError } from "./errors";
+import {
+  logGeminiFallbackAttempt,
+  logGeminiSynthesisFailed,
+  logPrimaryGeminiFailure,
+  type LoreGeminiLogContext,
+} from "./gemini-log";
+import { LORE_MODEL_ID, pickLoreModelChain } from "./model";
 import {
   buildLoreSynthesisPrompt,
   LORE_SYNTHESIS_SYSTEM,
@@ -24,6 +30,8 @@ export type LoreLocationInput = {
   longitude: number;
   label: string;
 };
+
+export type LoreRunContext = LoreGeminiLogContext;
 
 export type LorePipelineProgress = {
   stage: LoreJobStage;
@@ -42,6 +50,7 @@ export type LoreProgressReporter = (
 export async function runLoreForLocation(
   input: LoreLocationInput,
   onProgress?: LoreProgressReporter,
+  runContext?: LoreRunContext,
 ): Promise<LoreItem[]> {
   const report = async (progress: LorePipelineProgress) => {
     await onProgress?.(progress);
@@ -66,22 +75,37 @@ export async function runLoreForLocation(
   await report({ stage: "generating_headlines", count: headlineCount });
 
   const synthesisPrompt = buildLoreSynthesisPrompt(input.label, articles);
-  const output = await generateLoreHeadlines(synthesisPrompt);
+  const logContext: LoreGeminiLogContext = {
+    jobId: runContext?.jobId,
+    searchLabel: input.label,
+  };
+  const output = await generateLoreHeadlines(synthesisPrompt, logContext);
 
   return attachWikipediaImages(output, articles);
 }
 
-async function generateLoreHeadlines(prompt: string): Promise<LoreItem[]> {
-  const modelChain = await pickLoreModelChain();
+async function generateLoreHeadlines(
+  prompt: string,
+  logContext: LoreGeminiLogContext,
+): Promise<LoreItem[]> {
+  const modelChain = pickLoreModelChain();
   let lastError: unknown;
+  let lastModelId: string | undefined;
 
   for (let i = 0; i < modelChain.length; i++) {
     const modelId = modelChain[i];
     const isLastModel = i === modelChain.length - 1;
+    const nextModelId = isLastModel ? null : modelChain[i + 1];
+    lastModelId = modelId;
 
-    if (i === 0) {
-      console.info(`[LocalLore] Lore synthesis using ${modelId}`);
+    if (i > 0) {
+      await logGeminiFallbackAttempt(logContext, {
+        previousModelId: modelChain[i - 1],
+        fallbackModelId: modelId,
+      });
     }
+
+    console.info(`[LocalLore] Lore synthesis using ${modelId}`);
 
     try {
       const { output } = await generateText({
@@ -94,21 +118,31 @@ async function generateLoreHeadlines(prompt: string): Promise<LoreItem[]> {
       return output;
     } catch (error) {
       lastError = error;
-      if (!isGeminiTransientError(error) || isLastModel) {
+      const willFallback =
+        isGeminiModelFallbackError(error) && !isLastModel && nextModelId != null;
+
+      if (modelId === LORE_MODEL_ID) {
+        await logPrimaryGeminiFailure(error, logContext, {
+          willFallback,
+          fallbackModelId: willFallback ? nextModelId : null,
+        });
+      }
+
+      if (!willFallback) {
+        if (isLastModel) {
+          await logGeminiSynthesisFailed(error, logContext, modelId);
+        }
         throw error;
       }
+
       console.warn(
-        `[LocalLore] Model ${modelId} unavailable (${getTransientLogDetail(error)}), trying fallback…`,
+        `[LocalLore] Model ${modelId} at capacity, trying ${nextModelId}…`,
       );
     }
   }
 
-  throw lastError;
-}
-
-function getTransientLogDetail(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
+  if (lastModelId) {
+    await logGeminiSynthesisFailed(lastError, logContext, lastModelId);
   }
-  return String(error);
+  throw lastError;
 }

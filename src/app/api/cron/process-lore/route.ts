@@ -89,6 +89,7 @@ export async function POST(req: Request) {
           processingStartedAt,
         });
       },
+      { jobId },
     );
 
     await updateLoreJobStatus(jobId, { status: "complete", items });
