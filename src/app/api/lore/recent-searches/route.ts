@@ -2,16 +2,17 @@ import {
   getRecentSearches,
   isRecentSearchesConfigured,
 } from "@/lib/lore/recent-searches";
+import { getCommunityStats } from "@/lib/lore/supabase-cache";
 
 export async function GET() {
-  if (!isRecentSearchesConfigured()) {
-    return Response.json({ items: [] });
-  }
-
   try {
-    const items = await getRecentSearches();
+    const [items, stats] = await Promise.all([
+      isRecentSearchesConfigured() ? getRecentSearches() : Promise.resolve([]),
+      getCommunityStats(),
+    ]);
+
     return Response.json(
-      { items },
+      { items, stats },
       {
         headers: {
           "Cache-Control": "public, s-maxage=10",

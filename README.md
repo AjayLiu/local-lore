@@ -55,7 +55,7 @@ Completed lore jobs are **persisted to Supabase** (one row per Wikipedia `page_i
 ### Supabase geographic cache
 
 1. Create a Supabase project and enable the **PostGIS** extension (Database → Extensions).
-2. Run the SQL in [`supabase/migrations/001_lore_cards.sql`](supabase/migrations/001_lore_cards.sql) in the SQL editor (creates `lore_cards` and `get_lore_cards_in_bbox`).
+2. Run the SQL migrations in [`supabase/migrations/`](supabase/migrations/) in order in the SQL editor (`001_lore_cards.sql` for cached cards; `002_lore_searches.sql` for community search counts shown on the map).
 3. Add `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (service role, server-only) to `.env.local` and Vercel.
 4. After a lore search completes, rows appear in `lore_cards`. Pan the map to load cached pins via `GET /api/lore/cached?west=&south=&east=&north=`.
 

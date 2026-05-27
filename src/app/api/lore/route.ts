@@ -10,6 +10,7 @@ import { getLoreJobProgressPercent } from "@/lib/jobs/lore-progress";
 import { formatLoreStageMessage } from "@/lib/jobs/lore-stages";
 import { enqueueLoreJob, isQStashConfigured } from "@/lib/qstash/client";
 import { recordRecentSearch } from "@/lib/lore/recent-searches";
+import { recordCommunitySearch } from "@/lib/lore/supabase-cache";
 import { loreRequestSchema } from "@/lib/lore/schema";
 
 function getQueueConfigError(): string | null {
@@ -113,6 +114,11 @@ export async function POST(req: Request) {
         longitude,
         searchedAt: new Date().toISOString(),
       });
+      await recordCommunitySearch({ label, latitude, longitude }).catch(
+        (error) => {
+          console.error("Failed to record community search:", error);
+        },
+      );
     }
     await enqueueLoreJob(jobId);
   } catch (error) {

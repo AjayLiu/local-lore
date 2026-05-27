@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { RecentSearchEntry } from "@/lib/lore/recent-searches";
+import type { CommunityStats } from "@/lib/lore/supabase-cache";
 
 type RecentSearchesLeaderboardProps = {
   onSelect: (entry: RecentSearchEntry) => void;
@@ -47,11 +48,16 @@ function formatRelativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
+function formatCount(value: number): string {
+  return value.toLocaleString();
+}
+
 export function RecentSearchesLeaderboard({
   onSelect,
   refreshKey = 0,
 }: RecentSearchesLeaderboardProps) {
   const [items, setItems] = useState<RecentSearchEntry[]>([]);
+  const [stats, setStats] = useState<CommunityStats | null>(null);
   const [isOpen, setIsOpen] = useState(true);
 
   const load = useCallback(async () => {
@@ -61,13 +67,24 @@ export function RecentSearchesLeaderboard({
       if (!response.ok) {
         return;
       }
-      if (
-        typeof data === "object" &&
-        data !== null &&
-        "items" in data &&
-        Array.isArray((data as { items: unknown }).items)
-      ) {
+      if (typeof data !== "object" || data === null) {
+        return;
+      }
+
+      if ("items" in data && Array.isArray((data as { items: unknown }).items)) {
         setItems((data as { items: RecentSearchEntry[] }).items);
+      }
+
+      const rawStats = (data as { stats?: unknown }).stats;
+      if (
+        rawStats &&
+        typeof rawStats === "object" &&
+        typeof (rawStats as CommunityStats).totalSearches === "number" &&
+        typeof (rawStats as CommunityStats).totalCards === "number"
+      ) {
+        setStats(rawStats as CommunityStats);
+      } else {
+        setStats(null);
       }
     } catch {
       // Leaderboard is optional.
@@ -101,26 +118,36 @@ export function RecentSearchesLeaderboard({
         />
       </button>
       {isOpen ? (
-        <ul className="mt-0.5 flex flex-col gap-0.5">
-          {items.map((entry) => (
-            <li key={`${entry.searchedAt}-${entry.label}`}>
-              <button
-                type="button"
-                onClick={() => onSelect(entry)}
-                className="w-full rounded-lg px-2 py-1.5 text-left text-sm text-zinc-900 transition hover:bg-amber-50 focus:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-200"
-              >
-                <span className="line-clamp-2 font-medium leading-snug">
-                  {entry.label}
-                </span>
-                {entry.searchedAt ? (
-                  <span className="mt-0.5 block text-[0.65rem] text-zinc-500">
-                    {formatRelativeTime(entry.searchedAt)}
+        <>
+          <ul className="mt-0.5 flex flex-col gap-0.5">
+            {items.map((entry) => (
+              <li key={`${entry.searchedAt}-${entry.label}`}>
+                <button
+                  type="button"
+                  onClick={() => onSelect(entry)}
+                  className="w-full rounded-lg px-2 py-1.5 text-left text-sm text-zinc-900 transition hover:bg-amber-50 focus:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                >
+                  <span className="line-clamp-2 font-medium leading-snug">
+                    {entry.label}
                   </span>
-                ) : null}
-              </button>
-            </li>
-          ))}
-        </ul>
+                  {entry.searchedAt ? (
+                    <span className="mt-0.5 block text-[0.65rem] text-zinc-500">
+                      {formatRelativeTime(entry.searchedAt)}
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {stats ? (
+            <p className="mt-2 border-t border-zinc-200 px-2 pt-2 text-[0.65rem] leading-snug text-zinc-500">
+              {formatCount(stats.totalSearches)}{" "}
+              {stats.totalSearches === 1 ? "search" : "searches"} ·{" "}
+              {formatCount(stats.totalCards)}{" "}
+              {stats.totalCards === 1 ? "card" : "cards"}
+            </p>
+          ) : null}
+        </>
       ) : null}
     </nav>
   );

@@ -110,6 +110,57 @@ export async function getLoreCardsInBbox(
   return ((data ?? []) as LoreCardRow[]).map(rowToCachedPin);
 }
 
+export async function recordCommunitySearch(
+  search: SearchContext,
+): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    return;
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase.from("lore_searches").insert({
+    label: search.label,
+    latitude: search.latitude,
+    longitude: search.longitude,
+  });
+
+  if (error) {
+    throw new Error(`Failed to record community search: ${error.message}`);
+  }
+}
+
+export type CommunityStats = {
+  totalSearches: number;
+  totalCards: number;
+};
+
+export async function getCommunityStats(): Promise<CommunityStats | null> {
+  if (!isSupabaseConfigured()) {
+    return null;
+  }
+
+  const supabase = getSupabaseServerClient();
+  const [searchesResult, cardsResult] = await Promise.all([
+    supabase.from("lore_searches").select("*", { count: "exact", head: true }),
+    supabase.from("lore_cards").select("*", { count: "exact", head: true }),
+  ]);
+
+  if (searchesResult.error) {
+    throw new Error(
+      `Failed to count community searches: ${searchesResult.error.message}`,
+    );
+  }
+
+  if (cardsResult.error) {
+    throw new Error(`Failed to count lore cards: ${cardsResult.error.message}`);
+  }
+
+  return {
+    totalSearches: searchesResult.count ?? 0,
+    totalCards: cardsResult.count ?? 0,
+  };
+}
+
 export function parseLoreBbox(
   params: URLSearchParams,
 ): { bbox: LoreBbox } | { error: string } {
