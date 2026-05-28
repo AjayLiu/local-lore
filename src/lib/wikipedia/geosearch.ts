@@ -113,7 +113,7 @@ async function fetchGeosearchPages(options: {
       ggscoord: coord,
       redirects: "no",
       uselang: "en",
-      prop: "coordinates|pageprops|pageimages|description|info|pageterms|extracts",
+      prop: "coordinates|pageprops|pageimages|description|info|pageterms",
       inprop: "url",
       colimit: "max",
       ppprop: "displaytitle",
@@ -121,10 +121,6 @@ async function fetchGeosearchPages(options: {
       pithumbsize: String(WIKIPEDIA_THUMBNAIL_WIDTH),
       pilimit: "50",
       codistancefrompoint: coord,
-      exintro: "1",
-      explaintext: "1",
-      exchars: "600",
-      exlimit: "max",
     };
 
     if (continuation) {
@@ -194,9 +190,45 @@ async function fetchWikipediaExtractsByIds(
   return extractsByPageId;
 }
 
+async function fetchWikipediaThumbnailsByIds(
+  pageIds: number[],
+): Promise<Map<number, string>> {
+  const thumbnailsByPageId = new Map<number, string>();
+
+  for (let i = 0; i < pageIds.length; i += WIKIPEDIA_PAGE_BATCH_SIZE) {
+    const batch = pageIds.slice(i, i + WIKIPEDIA_PAGE_BATCH_SIZE);
+    const data = (await wikipediaFetch({
+      action: "query",
+      formatversion: "2",
+      pageids: batch.join("|"),
+      prop: "pageimages",
+      piprop: "thumbnail",
+      pithumbsize: String(WIKIPEDIA_THUMBNAIL_WIDTH),
+      pilimit: "max",
+      redirects: "no",
+      uselang: "en",
+    })) as GeosearchQueryResponse;
+
+    if (data.error) {
+      throw new Error(
+        `Wikipedia API error (${data.error.code}): ${data.error.info}`,
+      );
+    }
+
+    for (const page of data.query?.pages ?? []) {
+      const source = page.thumbnail?.source;
+      if (source) {
+        thumbnailsByPageId.set(page.pageid, source);
+      }
+    }
+  }
+
+  return thumbnailsByPageId;
+}
+
 /**
  * Nearby Wikipedia articles for lore synthesis using MediaWiki geosearch generator.
- * Pulls coordinates + metadata + extracts directly, then backfills missing extracts
+ * Pulls coordinates + metadata first, then fetches extracts/thumbnails by page ID
  * in batches. The full eligible set is passed to Gemini.
  */
 export type FetchNearbyArticlesProgress = {
@@ -236,11 +268,13 @@ export async function fetchNearbyWikipediaArticles(
 
   await onProgress?.({ stage: "fetching_nearby", count: wikiPages.length });
 
-  const pageIdsMissingExtract = wikiPages
-    .filter((page) => !page.extract?.trim())
+  const pageIds = wikiPages.map((page) => page.pageid);
+  const fallbackExtracts = await fetchWikipediaExtractsByIds(pageIds);
+  const pageIdsMissingThumbnail = wikiPages
+    .filter((page) => !page.thumbnail?.source)
     .map((page) => page.pageid);
-  const fallbackExtracts = await fetchWikipediaExtractsByIds(
-    pageIdsMissingExtract,
+  const fallbackThumbnails = await fetchWikipediaThumbnailsByIds(
+    pageIdsMissingThumbnail,
   );
 
   const articles: WikipediaArticle[] = [];
@@ -248,6 +282,8 @@ export async function fetchNearbyWikipediaArticles(
   for (const page of wikiPages) {
     const coords = page.coordinates?.[0];
     const extract = page.extract?.trim() ?? fallbackExtracts.get(page.pageid);
+    const thumbnailUrl =
+      page.thumbnail?.source ?? fallbackThumbnails.get(page.pageid);
     if (!extract || !coords) {
       continue;
     }
@@ -260,9 +296,7 @@ export async function fetchNearbyWikipediaArticles(
       extract,
       wikipediaUrl: page.fullurl ?? buildWikipediaUrl(page.title),
       wordcount: page.length ?? 0,
-      ...(page.thumbnail?.source
-        ? { thumbnailUrl: page.thumbnail.source }
-        : {}),
+      ...(thumbnailUrl ? { thumbnailUrl } : {}),
     });
   }
 
