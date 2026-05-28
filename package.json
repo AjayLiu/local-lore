@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "backfill:wikipedia-thumbnails": "node scripts/backfill-wikipedia-thumbnails.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.79",

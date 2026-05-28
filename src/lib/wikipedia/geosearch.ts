@@ -44,6 +44,7 @@ type GeosearchQueryResponse = {
     ggscontinue?: string;
     picontinue?: number | string;
     excontinue?: number | string;
+    [key: string]: string | number | undefined;
   };
   query?: {
     pages?: WikipediaPage[];
@@ -97,7 +98,7 @@ async function fetchGeosearchPages(options: {
   const coord = buildCoordParam(options.latitude, options.longitude);
   const ggsradius = String(normalizeRadiusMeters(options.radiusMeters));
   const ggslimit = String(Math.min(options.maxResults, WIKIPEDIA_SEARCH_PAGE_SIZE));
-  let continuation: { continue?: string; ggscontinue?: string } | undefined;
+  let continuation: Record<string, string> | undefined;
   let safetyCounter = 0;
 
   while (pagesById.size < options.maxResults) {
@@ -126,11 +127,8 @@ async function fetchGeosearchPages(options: {
       exlimit: "max",
     };
 
-    if (continuation?.continue) {
-      params.continue = continuation.continue;
-    }
-    if (continuation?.ggscontinue) {
-      params.ggscontinue = continuation.ggscontinue;
+    if (continuation) {
+      Object.assign(params, continuation);
     }
 
     const data = (await wikipediaFetch(params)) as GeosearchQueryResponse;
@@ -147,10 +145,11 @@ async function fetchGeosearchPages(options: {
       break;
     }
 
-    continuation = {
-      continue: data.continue.continue,
-      ggscontinue: data.continue.ggscontinue,
-    };
+    continuation = Object.fromEntries(
+      Object.entries(data.continue)
+        .filter(([, value]) => value !== undefined && value !== null)
+        .map(([key, value]) => [key, String(value)]),
+    );
 
     safetyCounter += 1;
     if (safetyCounter > 30) {
